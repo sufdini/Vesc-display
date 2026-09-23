@@ -53,12 +53,16 @@ public:
     void pushSprite(int x, int y);
 
     void drawPixel(int x, int y, uint16_t color);
+    uint16_t readPixel(int x, int y) const;
+    void drawLine(int x0, int y0, int x1, int y1, uint16_t color);
     void drawFastHLine(int x, int y, int w, uint16_t color);
     void drawFastVLine(int x, int y, int h, uint16_t color);
     void drawRect(int x, int y, int w, int h, uint16_t color);
     void fillRect(int x, int y, int w, int h, uint16_t color);
     void drawCircle(int x0, int y0, int r, uint16_t color);
     void fillCircle(int x0, int y0, int r, uint16_t color);
+    void drawRoundRect(int x, int y, int w, int h, int r, uint16_t color);
+    void fillRoundRect(int x, int y, int w, int h, int r, uint16_t color);
 
     int16_t drawString(const char *s, int x, int y, uint8_t font);
 
@@ -74,6 +78,7 @@ public:
 private:
     int16_t drawChar(uint16_t c, int x, int y, uint8_t font);
     void fillCircleHelper(int x0, int y0, int r, uint8_t corners, int delta, uint16_t color);
+    void drawCircleHelper(int x0, int y0, int r, uint8_t corners, uint16_t color);
 
     TFT_eSPI *tft_;
     int w_ = 0;

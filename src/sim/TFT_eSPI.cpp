@@ -1,6 +1,10 @@
 #include "TFT_eSPI.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+#include <algorithm>
+#include <utility>
 
 // Font tables from TFT_eSPI (see fonts/LICENSE.txt).
 extern const unsigned char widtbl_f16[96];
@@ -98,6 +102,39 @@ void TFT_eSprite::drawPixel(int x, int y, uint16_t color) {
     buf_[static_cast<size_t>(y) * w_ + x] = color;
 }
 
+uint16_t TFT_eSprite::readPixel(int x, int y) const {
+    x += xDatum_;
+    y += yDatum_;
+    if (x < 0 || y < 0 || x >= w_ || y >= h_) return 0;
+    return buf_[static_cast<size_t>(y) * w_ + x];
+}
+
+void TFT_eSprite::drawLine(int x0, int y0, int x1, int y1, uint16_t color) {
+    // Bresenham, as in TFT_eSPI.
+    const bool steep = abs(y1 - y0) > abs(x1 - x0);
+    if (steep) {
+        std::swap(x0, y0);
+        std::swap(x1, y1);
+    }
+    if (x0 > x1) {
+        std::swap(x0, x1);
+        std::swap(y0, y1);
+    }
+    const int dx = x1 - x0;
+    const int dy = abs(y1 - y0);
+    int err = dx / 2;
+    const int ystep = y0 < y1 ? 1 : -1;
+    for (; x0 <= x1; x0++) {
+        if (steep) drawPixel(y0, x0, color);
+        else drawPixel(x0, y0, color);
+        err -= dy;
+        if (err < 0) {
+            y0 += ystep;
+            err += dx;
+        }
+    }
+}
+
 void TFT_eSprite::drawFastHLine(int x, int y, int w, uint16_t color) {
     for (int i = 0; i < w; i++) drawPixel(x + i, y, color);
 }
@@ -149,6 +186,29 @@ void TFT_eSprite::drawCircle(int x0, int y0, int r, uint16_t color) {
 }
 
 void TFT_eSprite::fillCircleHelper(int x0, int y0, int r, uint8_t corners, int delta, uint16_t color) {
+    // As in TFT_eSPI: corners 1 = bottom half, 2 = top half, delta widens.
+    int f = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -r - r;
+    int y = 0;
+    delta++;
+    while (y < r) {
+        if (f >= 0) {
+            if (corners & 0x1) drawFastHLine(x0 - y, y0 + r, y + y + delta, color);
+            if (corners & 0x2) drawFastHLine(x0 - y, y0 - r, y + y + delta, color);
+            r--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        y++;
+        ddF_x += 2;
+        f += ddF_x;
+        if (corners & 0x1) drawFastHLine(x0 - r, y0 + y, r + r + delta, color);
+        if (corners & 0x2) drawFastHLine(x0 - r, y0 - y, r + r + delta, color);
+    }
+}
+
+void TFT_eSprite::drawCircleHelper(int x0, int y0, int r, uint8_t corners, uint16_t color) {
     int f = 1 - r;
     int ddF_x = 1;
     int ddF_y = -2 * r;
@@ -163,20 +223,63 @@ void TFT_eSprite::fillCircleHelper(int x0, int y0, int r, uint8_t corners, int d
         x++;
         ddF_x += 2;
         f += ddF_x;
-        if (corners & 1) {
-            drawFastVLine(x0 + x, y0 - y, 2 * y + 1 + delta, color);
-            drawFastVLine(x0 + y, y0 - x, 2 * x + 1 + delta, color);
+        if (corners & 0x4) {
+            drawPixel(x0 + x, y0 + y, color);
+            drawPixel(x0 + y, y0 + x, color);
         }
-        if (corners & 2) {
-            drawFastVLine(x0 - x, y0 - y, 2 * y + 1 + delta, color);
-            drawFastVLine(x0 - y, y0 - x, 2 * x + 1 + delta, color);
+        if (corners & 0x2) {
+            drawPixel(x0 + x, y0 - y, color);
+            drawPixel(x0 + y, y0 - x, color);
+        }
+        if (corners & 0x8) {
+            drawPixel(x0 - y, y0 + x, color);
+            drawPixel(x0 - x, y0 + y, color);
+        }
+        if (corners & 0x1) {
+            drawPixel(x0 - y, y0 - x, color);
+            drawPixel(x0 - x, y0 - y, color);
         }
     }
 }
 
+void TFT_eSprite::drawRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
+    drawFastHLine(x + r, y, w - r - r, color);
+    drawFastHLine(x + r, y + h - 1, w - r - r, color);
+    drawFastVLine(x, y + r, h - r - r, color);
+    drawFastVLine(x + w - 1, y + r, h - r - r, color);
+    drawCircleHelper(x + r, y + r, r, 1, color);
+    drawCircleHelper(x + w - r - 1, y + r, r, 2, color);
+    drawCircleHelper(x + w - r - 1, y + h - r - 1, r, 4, color);
+    drawCircleHelper(x + r, y + h - r - 1, r, 8, color);
+}
+
+void TFT_eSprite::fillRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
+    fillRect(x, y + r, w, h - r - r, color);
+    fillCircleHelper(x + r, y + h - r - 1, r, 1, w - r - r - 1, color);
+    fillCircleHelper(x + r, y + r, r, 2, w - r - r - 1, color);
+}
+
 void TFT_eSprite::fillCircle(int x0, int y0, int r, uint16_t color) {
-    drawFastVLine(x0, y0 - r, 2 * r + 1, color);
-    fillCircleHelper(x0, y0, r, 3, 0, color);
+    // TFT_eSPI's fillCircle: horizontal line per row.
+    int x = 0;
+    int dx = 1;
+    int dy = r + r;
+    int p = -(r >> 1);
+    drawFastHLine(x0 - r, y0, dy + 1, color);
+    while (x < r) {
+        if (p >= 0) {
+            drawFastHLine(x0 - x, y0 + r, dx, color);
+            drawFastHLine(x0 - x, y0 - r, dx, color);
+            dy -= 2;
+            p -= dy;
+            r--;
+        }
+        dx += 2;
+        p += dx;
+        x++;
+        drawFastHLine(x0 - r, y0 + x, dy + 1, color);
+        drawFastHLine(x0 - r, y0 - x, dy + 1, color);
+    }
 }
 
 int16_t TFT_eSprite::fontHeight(uint8_t font) const {

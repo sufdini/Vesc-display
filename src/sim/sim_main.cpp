@@ -53,22 +53,32 @@ struct Event {
 };
 const Event kScript[] = {
     {0.0f, "vesc-offline"},   // display boots before the VESC answers
-    {2.0f, "vesc-online"},
-    {14.0f, "next"},          // Power page
-    {22.0f, "next"},          // Trip page
-    {30.0f, "next"},          // System page
-    {36.0f, "next"},          // back to Main
-    {43.0f, "fault"},         // OVER_TEMP_FET for a few seconds
-    {46.5f, "fault-clear"},
-    {47.0f, "low-battery"},   // pack reads 34 V: low battery warning
-    {51.0f, "vesc-offline"},  // link lost at the end
+    {2.5f, "vesc-online"},
+    {12.0f, "next"},          // Stats
+    {18.0f, "next"},          // Trip
+    {24.0f, "next"},          // G-Force
+    {30.0f, "next"},          // Battery
+    {35.0f, "next"},          // back to Main
+    {37.0f, "hold"},          // open settings (gear animation)
+    {39.5f, "next"},          // row 2: Battery Series
+    {40.0f, "next"},          // row 3: ESC Warning
+    {41.0f, "prev"},          // 70 C -> 75 C
+    {42.0f, "next"},          // row 4
+    {42.5f, "next"},          // row 5 (page 2): Units
+    {43.0f, "next"},          // row 6: Boot Animation
+    {44.5f, "prev"},          // toggle it off
+    {46.0f, "hold"},          // close settings
+    {47.5f, "fault"},         // OVER_TEMP_FET for a few seconds
+    {50.5f, "fault-clear"},
+    {51.0f, "low-battery"},   // pack reads 34 V: low battery warning
+    {54.0f, "vesc-offline"},  // link lost at the end
 };
 
 }  // namespace
 
 int main(int argc, char **argv) {
     std::string outDir = "sim_out";
-    float seconds = 55.0f;
+    float seconds = 57.0f;
     int fps = 8;
     bool quiet = false;
     for (int i = 1; i < argc; i++) {
@@ -101,6 +111,7 @@ int main(int argc, char **argv) {
             else if (!strcmp(what, "vesc-offline")) sim::setVescOnline(false);
             else if (!strcmp(what, "next")) sim::pressButton(BUTTON_NEXT_PIN, 80);
             else if (!strcmp(what, "prev")) sim::pressButton(BUTTON_PREV_PIN, 80);
+            else if (!strcmp(what, "hold")) sim::pressButton(BUTTON_NEXT_PIN, 900);
             else if (!strcmp(what, "fault")) sim::setVescFault(vesc::FAULT_OVER_TEMP_FET);
             else if (!strcmp(what, "fault-clear")) sim::setVescFault(vesc::FAULT_NONE);
             else if (!strcmp(what, "low-battery")) sim::setVoltageOverride(34.0f);

@@ -33,7 +33,8 @@
 #define GEAR_RATIO (1.0f)
 
 // ---- Battery ---------------------------------------------------------------
-// Number of lithium cells in series (e.g. 10S = 10, 12S = 12).
+// Number of lithium cells in series (e.g. 10S = 10, 12S = 12). Can also be
+// changed on the display under Settings, which then takes precedence.
 #define BATTERY_CELLS 10
 
 // ---- Units -----------------------------------------------------------------
@@ -43,10 +44,10 @@
 // Text shown next to the speed in metric mode ("km/t" for Danish/Norwegian).
 #define SPEED_UNIT_LABEL "km/h"
 
-// Speed at which the gauge arc is full, in the unit selected above.
-#define SPEED_GAUGE_MAX 50.0f
-
 // ---- Board (LilyGO T-Display) ----------------------------------------------
 #define BUTTON_NEXT_PIN 35   // right button: cycle pages
 #define BUTTON_PREV_PIN 0    // left button: previous page
 #define SCREEN_ROTATION 1    // 1 = landscape, USB on the right
+#ifndef TFT_BL
+#define TFT_BL 4             // backlight pin (normally set by the TFT_eSPI build flags)
+#endif

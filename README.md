@@ -14,23 +14,33 @@ the protocol code is board-agnostic and the TFT setup is a few build flags.
 
 ## Screens
 
-Press the right button to go to the next page, the left button to go back.
+Black background, glowing amber digits, teal and cyan accents. The glow is
+real: text is blurred at half resolution and added under the frame on every
+redraw. Right button = next page, left button = previous page.
 
-| Page   | Shows                                                                 |
-| ------ | --------------------------------------------------------------------- |
-| Main   | Everything live on one screen: an anti-aliased speed gauge with a colour graded arc and peak marker, battery % and bar, pack and per-cell voltage, Ah used, distance driven, battery current, power, hub motor and ESC temperature. A red banner shows fault codes; link loss and low battery pulse. |
-| Power  | Motor current, battery current, power, duty cycle (with bar), ERPM, pack voltage |
-| Trip   | Distance, Ah used, Wh used, Wh/km (or Wh/mi), regenerated Ah, max speed |
-| System | ESC and motor temperature, VESC controller id, packet / CRC counters, uptime, last fault since boot |
+| Page      | Shows                                                              |
+| --------- | ------------------------------------------------------------------ |
+| Main      | Speed in a large digital font with the unit under it, a teal battery bar at the top, trip distance and battery current in the corners, ESC and motor temperature and pack voltage along the bottom with colour coded dots. Faults replace the bottom row with a blinking red line; link loss and low battery pulse. |
+| Stats     | ESC, MOTOR, VOLT / POWER, AMPS, AH USED                            |
+| Trip      | Distance driven, max speed, Wh per km, Ah used                     |
+| G-Force   | Longitudinal g from the change in speed, peak g, and a crosshair whose dot moves up when accelerating and down when braking |
+| Battery   | Series cell count, pack and cell voltage, percent, the green / yellow / red cell thresholds and a vertical level bar |
+| Settings  | Hold the right button. Brightness, battery series, ESC and motor warning temperature, units, boot animation, page animations, glow effect. Stored in flash. |
 
 All values refresh ten times a second and the screen redraws at 20 fps. On
-boot the gauge sweeps to full scale and back, pages slide in from the side,
-bars ease towards their targets, and warnings blink or pulse. Distance and
-Ah counters come from the VESC and reset when it is power cycled.
+boot a glowing emblem fades in and out, pages slide in from the side, the
+settings open with a spinning gear, bars ease towards their targets. Distance
+and Ah counters come from the VESC and reset when it is power cycled. The
+G-force page uses no accelerometer: it derives longitudinal acceleration from
+the speed, so it cannot show lateral g.
 
-On the other pages a status bar at the top shows the link state (green dot = live data,
-red = link lost), pack and per-cell voltage or the active **fault code**, and
-a battery gauge.
+### Buttons
+
+| Action                 | Normal pages     | In settings          |
+| ---------------------- | ---------------- | -------------------- |
+| Right button, short    | next page        | next row             |
+| Left button, short     | previous page    | change the value     |
+| Right button, hold     | open settings    | save and close       |
 
 ## Hardware
 
@@ -58,15 +68,19 @@ Edit `include/config.h`:
 | `MOTOR_POLES`         | Magnet poles of the motor (not pole pairs). Usually 14.     |
 | `WHEEL_DIAMETER_MM`   | Driven wheel outer diameter.                                |
 | `GEAR_RATIO`          | Wheel turns per motor turn. `1.0` for hub motors, `15.0/36.0` for a 15T:36T belt drive. |
-| `BATTERY_CELLS`       | Series cell count (10S = 10).                               |
-| `USE_IMPERIAL_UNITS`  | `0` for km/h and km, `1` for mph and miles.                 |
+| `BATTERY_CELLS`       | Series cell count (10S = 10). Also editable on the display. |
+| `USE_IMPERIAL_UNITS`  | `0` for km/h and km, `1` for mph and miles. Also editable on the display. |
 | `SPEED_UNIT_LABEL`    | Text next to the speed in metric mode, e.g. `"km/t"`.        |
-| `SPEED_GAUGE_MAX`     | Speed at which the gauge arc is full.                       |
 | `VESC_UART_BAUD`      | Must match the VESC UART app setting.                       |
 | `VESC_TIMEOUT_MS`     | Time without data before the display reports a lost link.   |
 
 Battery percentage is derived from pack voltage with a Li-ion discharge
 curve, so it reads a little low under heavy load and recovers at rest.
+Settings changed on the display are stored in the ESP32's flash and take
+precedence over `BATTERY_CELLS` and `USE_IMPERIAL_UNITS` after the first boot.
+
+The glow effect costs roughly 15 ms per frame on the ESP32. If the display
+ever feels sluggish, switch *Glow Effect* off in the settings.
 
 ## Building and flashing
 
@@ -96,8 +110,8 @@ The whole firmware runs on a desktop. `src/sim` contains stand-ins for the
 Arduino runtime and for TFT_eSPI (using the original TFT_eSPI fonts, so text
 is pixel identical), plus a fake VESC that answers `COMM_GET_VALUES` with a
 scripted ride: boot without a VESC, accelerate, cruise, brake with regen,
-flick through the pages, throw an `OVER_TEMP_FET` fault, run the battery
-low, lose the link.
+flick through the pages, open the settings and change two of them, throw an
+`OVER_TEMP_FET` fault, run the battery low, lose the link.
 
 ```sh
 pip install pillow
@@ -108,13 +122,21 @@ That compiles the simulator with whatever C++ compiler is on the PATH (or
 PlatformIO if none is), plays the ride, and writes `sim_out/demo.gif` and one
 PNG per page. Change something in `src/Dashboard.cpp`, run it again, look.
 
-| Main | Power |
-| ---- | ----- |
-| ![](docs/page-main.png) | ![](docs/page-power.png) |
+| Boot | Main |
+| ---- | ---- |
+| ![](docs/page-boot.png) | ![](docs/page-main.png) |
 
-| Trip | System |
-| ---- | ------ |
-| ![](docs/page-trip.png) | ![](docs/page-system.png) |
+| Stats | Trip |
+| ----- | ---- |
+| ![](docs/page-stats.png) | ![](docs/page-trip.png) |
+
+| G-Force | Battery |
+| ------- | ------- |
+| ![](docs/page-gforce.png) | ![](docs/page-battery.png) |
+
+| Settings | Settings, page 2 |
+| -------- | ---------------- |
+| ![](docs/page-settings.png) | ![](docs/page-settings2.png) |
 
 | Fault | Low battery | Link lost |
 | ----- | ----------- | --------- |
@@ -154,8 +176,9 @@ lib/VescUart/             VESC UART protocol (host-testable, no Arduino deps)
   VescValues.*            COMM_GET_VALUES decoder, fault names
   VescMath.*              ERPM -> speed, tachometer -> distance, battery %
   VescUart.*              Arduino Stream client that polls the VESC
-src/Dashboard.*           TFT_eSPI dashboard renderer (sprite based, no flicker)
-src/main.cpp              firmware entry point, buttons, polling loop
+src/Dashboard.*           TFT_eSPI dashboard renderer with the glow pipeline
+src/Settings.*            settings model, stored in flash with Preferences
+src/main.cpp              firmware entry point, buttons, settings, polling loop
 src/sim/                  PC simulator: Arduino + TFT_eSPI stand-ins, fake VESC
 test/test_protocol/       Unity tests for the protocol library
 tools/run_sim.py          one-command PC test: build, simulate, make GIF

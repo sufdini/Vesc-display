@@ -82,9 +82,10 @@ def make_gif(frames_dir, out_dir, fps, scale):
     images[0].save(gif, save_all=True, append_images=images[1:], duration=int(1000 / fps), loop=0, optimize=True)
 
     # Still images of each page, taken at moments the script has settled.
-    stills = {"page-main.png": 12.0, "page-power.png": 18.0, "page-trip.png": 26.0,
-              "page-system.png": 33.0, "page-fault.png": 45.0, "page-lowbatt.png": 49.0,
-              "page-nolink.png": 54.0}
+    stills = {"page-boot.png": 1.0, "page-main.png": 10.0, "page-stats.png": 15.0, "page-trip.png": 21.0,
+              "page-gforce.png": 27.0, "page-battery.png": 33.0, "page-gear.png": 37.9,
+              "page-settings.png": 41.5, "page-settings2.png": 45.0, "page-fault.png": 49.0, "page-lowbatt.png": 52.5,
+              "page-nolink.png": 56.5}
     for name, t in stills.items():
         idx = min(int(t * fps), len(frames) - 1)
         im = Image.open(frames[idx]).convert("RGB")
@@ -95,7 +96,7 @@ def make_gif(frames_dir, out_dir, fps, scale):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=os.path.join(ROOT, "sim_out"), help="output directory")
-    ap.add_argument("--seconds", type=float, default=55.0, help="length of the ride")
+    ap.add_argument("--seconds", type=float, default=57.0, help="length of the ride")
     ap.add_argument("--fps", type=int, default=8)
     ap.add_argument("--scale", type=int, default=2, help="upscale factor for the GIF")
     ap.add_argument("--open", action="store_true", help="open the GIF when done")

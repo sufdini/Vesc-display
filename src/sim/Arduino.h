@@ -28,6 +28,9 @@ T constrain(T v, T lo, T hi) {
 uint32_t millis();
 void pinMode(uint8_t pin, uint8_t mode);
 int digitalRead(uint8_t pin);
+inline void ledcSetup(uint8_t, double, uint8_t) {}
+inline void ledcAttachPin(uint8_t, uint8_t) {}
+inline void ledcWrite(uint8_t, uint32_t) {}
 
 class Stream {
 public:

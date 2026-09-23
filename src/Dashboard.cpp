@@ -2,43 +2,37 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "config.h"
 
 namespace {
 constexpr uint16_t kBg = TFT_BLACK;
-constexpr uint16_t kFg = TFT_WHITE;
-constexpr uint16_t kDim = 0x7BEF;      // mid grey (labels)
-constexpr uint16_t kTrack = 0x2124;    // dark grey (gauge track)
-constexpr uint16_t kGood = 0x07E0;     // green
-constexpr uint16_t kWarn = 0xFD20;     // amber
-constexpr uint16_t kBad = 0xF800;      // red
-constexpr uint16_t kAccent = 0x05FF;   // cyan
-constexpr uint16_t kAccent2 = 0x3D9F;  // light blue
-constexpr uint16_t kRegen = 0x3D9F;
+constexpr uint16_t kAmber = 0xFD80;    // 255,176,0
+constexpr uint16_t kAmberDim = 0x7280; // darker amber for secondary text
+constexpr uint16_t kGrey = 0x39E7;     // tracks and outlines
+constexpr uint16_t kTeal = 0x07F9;     // 0,255,200
+constexpr uint16_t kCyan = 0x07FF;
+constexpr uint16_t kMagenta = 0xF81F;
+constexpr uint16_t kBlue = 0x3D9F;
+constexpr uint16_t kRed = 0xF800;
+constexpr uint16_t kGreen = 0x07E0;
+constexpr uint16_t kYellow = 0xFFE0;
+constexpr uint16_t kWhite = TFT_WHITE;
 
-constexpr int kStatusBarH = 18;
-
-// Gauge geometry (main page)
-constexpr int kGaugeCx = 60;
-constexpr int kGaugeCy = 62;
-constexpr float kGaugeRIn = 42.0f;
-constexpr float kGaugeROut = 50.0f;
-constexpr float kGaugeStart = 135.0f;  // bottom left
-constexpr float kGaugeSweep = 270.0f;  // clockwise to bottom right
-
-constexpr uint32_t kBootSweepMs = 1400;
+constexpr uint32_t kBootMs = 2200;
 constexpr uint32_t kSlideMs = 240;
-
-constexpr float kDegToRad = 3.14159265f / 180.0f;
-
-const char *speedUnit(bool imperial) { return imperial ? "mph" : SPEED_UNIT_LABEL; }
+constexpr uint32_t kGearMs = 700;
+constexpr float kPi = 3.14159265f;
+constexpr float kDegToRad = kPi / 180.0f;
 
 float clamp01(float v) { return v < 0 ? 0 : (v > 1 ? 1 : v); }
 float easeOutCubic(float t) {
     const float u = 1.0f - t;
     return 1.0f - u * u * u;
 }
+const char *speedUnit(bool imperial) { return imperial ? "mph" : SPEED_UNIT_LABEL; }
+const char *distUnit(bool imperial) { return imperial ? "mi" : "km"; }
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -53,15 +47,14 @@ void Dashboard::begin(uint8_t rotation) {
     h_ = tft_.height();
     spr_.setColorDepth(16);
     spr_.createSprite(w_, h_);
-    spr_.setTextDatum(TL_DATUM);
+    mask_.setColorDepth(8);  // glow mask: colour is enough at 8 bits, saves RAM
+    mask_.createSprite(w_, h_);
     bootMs_ = millis();
     lastFrameMs_ = bootMs_;
 }
 
 float Dashboard::smooth(float &state, float target, float rate) {
-    // Exponential approach, frame-rate independent.
-    const float a = 1.0f - expf(-rate * dt_);
-    state += (target - state) * a;
+    state += (target - state) * (1.0f - expf(-rate * dt_));
     return state;
 }
 
@@ -70,6 +63,41 @@ void Dashboard::render(const DashboardState &s) {
     dt_ = (now - lastFrameMs_) / 1000.0f;
     if (dt_ <= 0.0f || dt_ > 0.5f) dt_ = 0.05f;
     lastFrameMs_ = now;
+    glowEnabled_ = s.settings.glow;
+
+    spr_.fillSprite(kBg);
+    mask_.fillSprite(kBg);
+
+    // Boot logo
+    const uint32_t sinceBoot = now - bootMs_;
+    if (s.settings.bootAnimation && sinceBoot < kBootMs) {
+        float fade = 1.0f;
+        if (sinceBoot < 500) fade = sinceBoot / 500.0f;
+        else if (sinceBoot > kBootMs - 400) fade = (kBootMs - sinceBoot) / 400.0f;
+        drawBoot(clamp01(fade));
+        compositeGlow(0.9f);
+        spr_.pushSprite(0, 0);
+        return;
+    }
+
+    // Settings overlay (with a spinning gear while it opens)
+    if (s.settingsOpen) {
+        if (!settingsShown_) {
+            settingsShown_ = true;
+            settingsOpenMs_ = now;
+        }
+        const uint32_t t = now - settingsOpenMs_;
+        if (s.settings.pageAnimations && t < kGearMs) {
+            const float p = t / static_cast<float>(kGearMs);
+            drawGear(w_ / 2, h_ / 2, easeOutCubic(p) * 180.0f, p < 0.8f ? 1.0f : (1.0f - p) / 0.2f);
+        } else {
+            drawSettings(s);
+        }
+        compositeGlow(0.9f);
+        spr_.pushSprite(0, 0);
+        return;
+    }
+    settingsShown_ = false;
 
     // Page change: start a slide.
     if (s.page != shownPage_) {
@@ -79,33 +107,36 @@ void Dashboard::render(const DashboardState &s) {
         fromPage_ = shownPage_;
         shownPage_ = s.page;
         slideStartMs_ = now;
-        sliding_ = true;
+        sliding_ = s.settings.pageAnimations;
     }
-
-    spr_.fillSprite(kBg);
 
     if (sliding_) {
         const float p = clamp01((now - slideStartMs_) / static_cast<float>(kSlideMs));
         const int off = static_cast<int>(roundf(easeOutCubic(p) * w_));
         spr_.setViewport(-off * slideDir_, 0, w_, h_);
-        drawPage(fromPage_, s);
+        mask_.setViewport(-off * slideDir_, 0, w_, h_);
+        drawScreen(fromPage_, s);
         spr_.setViewport((w_ - off) * slideDir_, 0, w_, h_);
-        drawPage(shownPage_, s);
+        mask_.setViewport((w_ - off) * slideDir_, 0, w_, h_);
+        drawScreen(shownPage_, s);
         spr_.resetViewport();
+        mask_.resetViewport();
         if (p >= 1.0f) sliding_ = false;
     } else {
-        drawPage(shownPage_, s);
+        drawScreen(shownPage_, s);
     }
 
+    compositeGlow(0.9f);
     spr_.pushSprite(0, 0);
 }
 
-void Dashboard::drawPage(Page page, const DashboardState &s) {
+void Dashboard::drawScreen(Page page, const DashboardState &s) {
     switch (page) {
-        case Page::Main: drawPageMain(s); break;
-        case Page::Power: drawPagePower(s); break;
-        case Page::Trip: drawPageTrip(s); break;
-        case Page::System: drawPageSystem(s); break;
+        case Page::Main: drawMain(s); break;
+        case Page::Stats: drawStats(s); break;
+        case Page::Trip: drawTrip(s); break;
+        case Page::GForce: drawGForce(s); break;
+        case Page::Battery: drawBattery(s); break;
         default: break;
     }
     drawPageDots(s);
@@ -125,32 +156,74 @@ uint16_t Dashboard::blend(uint16_t a, uint16_t b, float t) {
     return static_cast<uint16_t>((r << 11) | (g << 5) | bl);
 }
 
-uint16_t Dashboard::batteryColor(float percent) const {
-    if (percent > 40.0f) return kGood;
-    if (percent > 20.0f) return kWarn;
-    return kBad;
+// Additive blend: base + glow * t, clamped per channel.
+uint16_t Dashboard::add(uint16_t base, uint16_t glow, float t) {
+    int r = ((base >> 11) & 0x1F) + static_cast<int>(((glow >> 11) & 0x1F) * t);
+    int g = ((base >> 5) & 0x3F) + static_cast<int>(((glow >> 5) & 0x3F) * t);
+    int b = (base & 0x1F) + static_cast<int>((glow & 0x1F) * t);
+    if (r > 31) r = 31;
+    if (g > 63) g = 63;
+    if (b > 31) b = 31;
+    return static_cast<uint16_t>((r << 11) | (g << 5) | b);
 }
 
-uint16_t Dashboard::tempColor(float degC, float warn, float hot) const {
-    if (degC >= hot) return kBad;
-    if (degC >= warn) return kWarn;
-    return kFg;
+uint16_t Dashboard::tempColor(float degC, float warn) const {
+    if (degC >= warn + 15.0f) return kRed;
+    if (degC >= warn) return kYellow;
+    return kCyan;
 }
 
-// Colour along the gauge: cyan, then amber, then red near full scale.
-uint16_t Dashboard::gaugeColor(float t, bool alert) const {
-    if (alert) return kBad;
-    if (t < 0.6f) return blend(kAccent2, kAccent, t / 0.6f);
-    if (t < 0.8f) return blend(kAccent, kWarn, (t - 0.6f) / 0.2f);
-    return blend(kWarn, kBad, (t - 0.8f) / 0.2f);
+uint16_t Dashboard::cellColor(float cellV) const {
+    if (cellV >= 3.75f) return kGreen;
+    if (cellV >= 3.45f) return kYellow;
+    return kRed;
 }
 
 // ---------------------------------------------------------------------------
-// Arc drawing (anti-aliased, no trig per pixel outside the ring band)
+// Glow pipeline
 // ---------------------------------------------------------------------------
 
-void Dashboard::drawArc(int cx, int cy, float rIn, float rOut, float startDeg, float sweepDeg, uint16_t color,
-                        uint16_t bg) {
+void Dashboard::text(const char *str, int x, int y, uint8_t font, uint8_t datum, uint16_t color, bool glow) {
+    spr_.setTextDatum(datum);
+    spr_.setTextColor(color, color);  // transparent background
+    spr_.drawString(str, x, y, font);
+    if (glow && glowEnabled_) {
+        mask_.setTextDatum(datum);
+        mask_.setTextColor(color, color);
+        mask_.drawString(str, x, y, font);
+    }
+}
+
+void Dashboard::pill(int x, int y, int w, int h, uint16_t color, bool glow) {
+    const int r = h / 2;
+    spr_.fillRoundRect(x, y, w, h, r, color);
+    if (glow && glowEnabled_) mask_.fillRoundRect(x, y, w, h, r, color);
+}
+
+void Dashboard::dot(int x, int y, int r, uint16_t color, bool glow) {
+    spr_.fillCircle(x, y, r, color);
+    if (glow && glowEnabled_) mask_.fillCircle(x, y, r, color);
+}
+
+void Dashboard::box(int x, int y, int w, int h, uint16_t color, bool filled, bool glow) {
+    if (filled) spr_.fillRoundRect(x, y, w, h, 4, color);
+    else spr_.drawRoundRect(x, y, w, h, 4, color);
+    if (glow && glowEnabled_) {
+        if (filled) mask_.fillRoundRect(x, y, w, h, 4, color);
+        else mask_.drawRoundRect(x, y, w, h, 4, color);
+    }
+}
+
+void Dashboard::ring(int cx, int cy, float rIn, float rOut, float startDeg, float sweepDeg, uint16_t color,
+                     bool glow) {
+    arcInto(spr_, cx, cy, rIn, rOut, startDeg, sweepDeg, color);
+    if (glow && glowEnabled_) arcInto(mask_, cx, cy, rIn, rOut, startDeg, sweepDeg, color);
+}
+
+// Anti-aliased ring segment blended against black. Angles in degrees, 0 =
+// right, clockwise on screen.
+void Dashboard::arcInto(TFT_eSprite &spr, int cx, int cy, float rIn, float rOut, float startDeg, float sweepDeg,
+                        uint16_t color) {
     const int r = static_cast<int>(rOut) + 2;
     const float rIn2 = (rIn - 1.0f) * (rIn - 1.0f);
     const float rOut2 = (rOut + 1.0f) * (rOut + 1.0f);
@@ -164,362 +237,338 @@ void Dashboard::drawArc(int cx, int cy, float rIn, float rOut, float startDeg, f
             float rel = atan2f(static_cast<float>(y), static_cast<float>(x)) / kDegToRad - startDeg;
             while (rel < 0) rel += 360.0f;
             while (rel >= 360.0f) rel -= 360.0f;
-            // Soft angular ends: distance to the end in pixels along the arc.
-            const float aa = clamp01(fminf(rel, sweepDeg - rel) * kDegToRad * d + 0.5f);
-            if (aa <= 0.0f) continue;
-            spr_.drawPixel(cx + x, cy + y, blend(bg, color, ar * aa));
+            float aa = 1.0f;
+            if (sweepDeg < 360.0f) {
+                aa = clamp01(fminf(rel, sweepDeg - rel) * kDegToRad * d + 0.5f);
+                if (aa <= 0.0f) continue;
+            }
+            spr.drawPixel(cx + x, cy + y, blend(kBg, color, ar * aa));
         }
     }
 }
 
-void Dashboard::drawGaugeRing(int cx, int cy, float rIn, float rOut, float startDeg, float sweepDeg,
-                              float valueFraction, bool alert) {
-    const float valueSweep = clamp01(valueFraction) * sweepDeg;
-    const int r = static_cast<int>(rOut) + 2;
-    const float rIn2 = (rIn - 1.0f) * (rIn - 1.0f);
-    const float rOut2 = (rOut + 1.0f) * (rOut + 1.0f);
-    for (int y = -r; y <= r; y++) {
-        for (int x = -r; x <= r; x++) {
-            const float d2 = static_cast<float>(x * x + y * y);
-            if (d2 < rIn2 || d2 > rOut2) continue;
-            const float d = sqrtf(d2);
-            const float ar = clamp01(fminf(d - rIn + 0.5f, rOut + 0.5f - d));
-            if (ar <= 0.0f) continue;
-            float rel = atan2f(static_cast<float>(y), static_cast<float>(x)) / kDegToRad - startDeg;
-            while (rel < 0) rel += 360.0f;
-            while (rel >= 360.0f) rel -= 360.0f;
-            const float at = clamp01(fminf(rel, sweepDeg - rel) * kDegToRad * d + 0.5f);
-            if (at <= 0.0f) continue;
-            uint16_t c = blend(kBg, kTrack, ar * at);
-            if (valueSweep > 0.0f) {
-                const float av = clamp01((valueSweep - rel) * kDegToRad * d + 0.5f);
-                if (av > 0.0f) {
-                    c = blend(c, gaugeColor(rel / sweepDeg, alert), ar * av);
+// Blur the mask at half resolution and add it under the frame.
+void Dashboard::compositeGlow(float gain) {
+    if (!glowEnabled_) return;
+
+    // 1. Downsample: average of each 2x2 block, per channel, scaled to 0..255.
+    for (int j = 0; j < kGH; j++) {
+        for (int i = 0; i < kGW; i++) {
+            int r = 0, g = 0, b = 0;
+            for (int dy = 0; dy < 2; dy++) {
+                for (int dx = 0; dx < 2; dx++) {
+                    const uint16_t c = mask_.readPixel(2 * i + dx, 2 * j + dy);
+                    r += (c >> 11) & 0x1F;
+                    g += (c >> 5) & 0x3F;
+                    b += c & 0x1F;
                 }
             }
-            spr_.drawPixel(cx + x, cy + y, c);
+            gr_[j * kGW + i] = static_cast<uint8_t>(r * 2);  // 4 * 31 * 2 = 248
+            gg_[j * kGW + i] = static_cast<uint8_t>(g);      // 4 * 63 = 252
+            gb_[j * kGW + i] = static_cast<uint8_t>(b * 2);
+        }
+    }
+
+    // 2. Two passes of a separable box blur (radius 3) per channel.
+    uint8_t *channels[3] = {gr_, gg_, gb_};
+    for (int ch = 0; ch < 3; ch++) {
+        uint8_t *a = channels[ch];
+        for (int pass = 0; pass < 2; pass++) {
+            for (int j = 0; j < kGH; j++) {
+                for (int i = 0; i < kGW; i++) {
+                    int sum = 0;
+                    for (int k = -3; k <= 3; k++) {
+                        int ii = i + k;
+                        if (ii < 0) ii = 0;
+                        if (ii >= kGW) ii = kGW - 1;
+                        sum += a[j * kGW + ii];
+                    }
+                    tmp_[j * kGW + i] = static_cast<uint8_t>(sum / 7);
+                }
+            }
+            for (int j = 0; j < kGH; j++) {
+                for (int i = 0; i < kGW; i++) {
+                    int sum = 0;
+                    for (int k = -3; k <= 3; k++) {
+                        int jj = j + k;
+                        if (jj < 0) jj = 0;
+                        if (jj >= kGH) jj = kGH - 1;
+                        sum += tmp_[jj * kGW + i];
+                    }
+                    a[j * kGW + i] = static_cast<uint8_t>(sum / 7);
+                }
+            }
+        }
+    }
+
+    // 3. Upsample (bilinear) and add under the frame.
+    for (int y = 0; y < h_; y++) {
+        const float v = y * 0.5f - 0.25f;
+        int j0 = static_cast<int>(floorf(v));
+        const float fy = v - j0;
+        if (j0 < 0) j0 = 0;
+        int j1 = j0 + 1 < kGH ? j0 + 1 : j0;
+        for (int x = 0; x < w_; x++) {
+            const float u = x * 0.5f - 0.25f;
+            int i0 = static_cast<int>(floorf(u));
+            const float fx = u - i0;
+            if (i0 < 0) i0 = 0;
+            int i1 = i0 + 1 < kGW ? i0 + 1 : i0;
+            const int a00 = j0 * kGW + i0, a01 = j0 * kGW + i1, a10 = j1 * kGW + i0, a11 = j1 * kGW + i1;
+            const float w00 = (1 - fx) * (1 - fy), w01 = fx * (1 - fy), w10 = (1 - fx) * fy, w11 = fx * fy;
+            const float r = gr_[a00] * w00 + gr_[a01] * w01 + gr_[a10] * w10 + gr_[a11] * w11;
+            const float g = gg_[a00] * w00 + gg_[a01] * w01 + gg_[a10] * w10 + gg_[a11] * w11;
+            const float b = gb_[a00] * w00 + gb_[a01] * w01 + gb_[a10] * w10 + gb_[a11] * w11;
+            if (r + g + b < 3.0f) continue;
+            const uint16_t glowColor = static_cast<uint16_t>((static_cast<int>(r / 8) << 11) |
+                                                             (static_cast<int>(g / 4) << 5) |
+                                                             static_cast<int>(b / 8));
+            spr_.drawPixel(x, y, add(spr_.readPixel(x, y), glowColor, gain));
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Widgets
+// Boot logo and settings gear
 // ---------------------------------------------------------------------------
 
-void Dashboard::drawCell(int x, int y, const char *label, const char *value, uint16_t color) {
-    spr_.setTextDatum(TL_DATUM);
-    spr_.setTextColor(kDim, kBg);
-    spr_.drawString(label, x, y, 1);
-    spr_.setTextColor(color, kBg);
-    spr_.drawString(value, x, y + 9, 4);
-}
-
-void Dashboard::drawBar(int x, int y, int w, int h, float fraction, uint16_t color) {
-    spr_.fillRect(x, y, w, h, kTrack);
-    const int fillW = static_cast<int>(roundf(w * clamp01(fraction)));
-    if (fillW > 0) spr_.fillRect(x, y, fillW, h, color);
-}
-
-void Dashboard::drawBipolarBar(int x, int y, int w, int h, float fraction, uint16_t posColor, uint16_t negColor) {
-    spr_.fillRect(x, y, w, h, kTrack);
-    const int mid = x + w / 2;
-    const float f = constrain(fraction, -1.0f, 1.0f);
-    const int len = static_cast<int>(roundf(fabsf(f) * (w / 2)));
-    if (len > 0) {
-        if (f >= 0) spr_.fillRect(mid, y, len, h, posColor);
-        else spr_.fillRect(mid - len, y, len, h, negColor);
+void Dashboard::drawBoot(float fade) {
+    // Emblem: a thick chevron with a bar across the top, glowing amber.
+    const uint16_t c = blend(kBg, kAmber, fade);
+    const int cx = w_ / 2, cy = h_ / 2 - 6;
+    for (int t = -2; t <= 2; t++) {
+        spr_.drawLine(cx - 30, cy - 18 + t, cx + 30, cy - 18 + t, c);
+        spr_.drawLine(cx - 26 + t, cy - 12, cx + t, cy + 26, c);
+        spr_.drawLine(cx + 26 + t, cy - 12, cx + t, cy + 26, c);
+        if (glowEnabled_) {
+            mask_.drawLine(cx - 30, cy - 18 + t, cx + 30, cy - 18 + t, c);
+            mask_.drawLine(cx - 26 + t, cy - 12, cx + t, cy + 26, c);
+            mask_.drawLine(cx + 26 + t, cy - 12, cx + t, cy + 26, c);
+        }
     }
-    spr_.drawFastVLine(mid, y - 1, h + 2, kFg);
+    dot(cx - 30, cy - 24, 3, c);
+    dot(cx + 30, cy - 24, 3, c);
+    text("VESC DISPLAY", cx, cy + 36, 2, TC_DATUM, blend(kBg, kAmberDim, fade));
 }
 
-void Dashboard::drawBatteryIcon(int x, int y, int w, int h, float percent, uint16_t color) {
-    spr_.drawRect(x, y, w, h, kDim);
-    spr_.fillRect(x + w, y + h / 4, 2, h / 2, kDim);
-    const int fillW = static_cast<int>(roundf((w - 4) * clamp01(percent / 100.0f)));
-    if (fillW > 0) spr_.fillRect(x + 2, y + 2, fillW, h - 4, color);
+void Dashboard::drawGear(int cx, int cy, float angleDeg, float fade) {
+    const uint16_t c = blend(kBg, kAmber, fade);
+    ring(cx, cy, 10.0f, 16.0f, 0.0f, 360.0f, c, true);
+    for (int i = 0; i < 8; i++) {
+        ring(cx, cy, 15.0f, 23.0f, angleDeg + i * 45.0f - 11.0f, 22.0f, c, true);
+    }
+    text("SETTINGS", cx, cy + 34, 2, TC_DATUM, blend(kBg, kAmberDim, fade));
 }
 
 void Dashboard::drawPageDots(const DashboardState &s) {
-    // Small vertical column of dots at the bottom right.
     const int n = static_cast<int>(Page::Count);
-    const int spacing = 7;
-    const int x = w_ - 4;
-    const int y0 = h_ - 4 - (n - 1) * spacing;
+    const int spacing = 8;
+    const int x0 = w_ / 2 - (n - 1) * spacing / 2;
     for (int i = 0; i < n; i++) {
-        if (i == static_cast<int>(s.page)) spr_.fillCircle(x, y0 + i * spacing, 2, kFg);
-        else spr_.fillCircle(x, y0 + i * spacing, 1, kDim);
+        const bool active = i == static_cast<int>(s.page);
+        spr_.fillCircle(x0 + i * spacing, h_ - 3, active ? 2 : 1, active ? kAmber : kGrey);
     }
-}
-
-void Dashboard::drawStatusBar(const DashboardState &s) {
-    char buf[32];
-    const uint32_t now = millis();
-    spr_.setTextDatum(TL_DATUM);
-
-    const uint16_t dot = s.connected ? kGood : (s.everConnected ? kBad : kDim);
-    spr_.fillCircle(7, kStatusBarH / 2 - 1, 3, dot);
-
-    if (!s.connected) {
-        spr_.setTextColor(s.everConnected ? kBad : kDim, kBg);
-        spr_.drawString(s.everConnected ? "NO LINK" : "NO VESC", 16, 1, 2);
-    } else if (s.values.fault != vesc::FAULT_NONE) {
-        const bool on = (now / 350) % 2 == 0;
-        spr_.setTextColor(on ? kBad : kDim, kBg);
-        snprintf(buf, sizeof(buf), "FAULT  %s", vesc::faultName(s.values.fault));
-        spr_.drawString(buf, 16, 1, 2);
-    } else {
-        spr_.setTextColor(kDim, kBg);
-        snprintf(buf, sizeof(buf), "%.1fV   %.2fV/c", s.batteryVoltage, s.cellVoltage);
-        spr_.drawString(buf, 16, 1, 2);
-    }
-
-    spr_.setTextDatum(TR_DATUM);
-    spr_.setTextColor(s.connected ? batteryColor(s.batteryPercent) : kDim, kBg);
-    snprintf(buf, sizeof(buf), "%d%%", static_cast<int>(roundf(s.batteryPercent)));
-    spr_.drawString(buf, w_ - 34, 1, 2);
-    drawBatteryIcon(w_ - 30, 3, 24, 11, s.batteryPercent, s.connected ? batteryColor(s.batteryPercent) : kDim);
-    spr_.setTextDatum(TL_DATUM);
-
-    spr_.drawFastHLine(0, kStatusBarH, w_, kTrack);
 }
 
 // ---------------------------------------------------------------------------
-// Main page
+// Screens
 // ---------------------------------------------------------------------------
 
-void Dashboard::drawSpeedGauge(float arcFraction, float peakFraction, bool alert) {
-    drawGaugeRing(kGaugeCx, kGaugeCy, kGaugeRIn, kGaugeROut, kGaugeStart, kGaugeSweep, arcFraction, alert);
-
-    // Peak marker just outside the ring.
-    if (peakFraction > 0.01f) {
-        drawArc(kGaugeCx, kGaugeCy, kGaugeROut + 2.0f, kGaugeROut + 5.0f,
-                kGaugeStart + peakFraction * kGaugeSweep - 1.5f, 3.0f, kFg, kBg);
-    }
-
-    // Tick marks at 0, 25, 50, 75, 100 %.
-    for (int i = 0; i <= 4; i++) {
-        const float a = (kGaugeStart + kGaugeSweep * i / 4.0f) * kDegToRad;
-        const int x0 = kGaugeCx + static_cast<int>(roundf(cosf(a) * (kGaugeRIn - 3.0f)));
-        const int y0 = kGaugeCy + static_cast<int>(roundf(sinf(a) * (kGaugeRIn - 3.0f)));
-        spr_.drawPixel(x0, y0, kDim);
-    }
-}
-
-void Dashboard::drawPageMain(const DashboardState &s) {
+void Dashboard::drawMain(const DashboardState &s) {
     char buf[32];
     const uint32_t now = millis();
     const bool live = s.connected;
     const bool fault = live && s.values.fault != vesc::FAULT_NONE;
     const bool blinkOn = (now / 350) % 2 == 0;
-    const float pulse = 0.5f + 0.5f * sinf(now * (2.0f * 3.14159265f / 1200.0f));
-
-    // --- Boot sweep: arc and digits run up to full scale and back --------
-    const uint32_t sinceBoot = now - bootMs_;
-    const bool booting = sinceBoot < kBootSweepMs;
-    float speedShown = fabsf(s.speed);
-    float arcTarget = clamp01(speedShown / SPEED_GAUGE_MAX);
-    if (booting) {
-        const float t = sinceBoot / static_cast<float>(kBootSweepMs);
-        const float f = sinf(t * 3.14159265f);
-        arcTarget = f;
-        arcAnim_ = f;
-        speedShown = f * SPEED_GAUGE_MAX;
-    } else {
-        smooth(arcAnim_, live ? arcTarget : 0.0f, 12.0f);
-    }
-    const float peak = live ? clamp01(s.maxSpeed / SPEED_GAUGE_MAX) : 0.0f;
-
-    // --- Gauge ------------------------------------------------------------
-    drawSpeedGauge(arcAnim_, peak, fault);
-
-    const uint16_t digitColor = !live && !booting ? kDim : (fault && !blinkOn ? kDim : kFg);
-    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(speedShown)));
-    spr_.setTextColor(digitColor, kBg);
-    spr_.setTextDatum(TC_DATUM);
-    spr_.drawString(buf, kGaugeCx, kGaugeCy - 21, 6);
-
-    // Unit / status word inside the gauge opening.
-    if (!live && !booting) {
-        spr_.setTextColor(s.everConnected ? blend(kBad, kDim, pulse) : kDim, kBg);
-        spr_.drawString(s.everConnected ? "NO LINK" : "NO VESC", kGaugeCx, kGaugeCy + 24, 2);
-    } else if (fault) {
-        spr_.setTextColor(blinkOn ? kBad : kDim, kBg);
-        spr_.drawString("FAULT", kGaugeCx, kGaugeCy + 24, 2);
-    } else if (s.speed < -0.5f) {
-        spr_.setTextColor(kWarn, kBg);
-        spr_.drawString("REVERSE", kGaugeCx, kGaugeCy + 24, 2);
-    } else {
-        spr_.setTextColor(kDim, kBg);
-        spr_.drawString(speedUnit(s.imperial), kGaugeCx, kGaugeCy + 24, 2);
-    }
-    spr_.setTextDatum(TL_DATUM);
-
-    // --- Battery bar under the gauge ---------------------------------------
-    smooth(batteryAnim_, live ? s.batteryPercent / 100.0f : 0.0f, 6.0f);
-    const uint16_t battColor = live ? batteryColor(s.batteryPercent) : kDim;
+    const float pulse = 0.5f + 0.5f * sinf(now * (2.0f * kPi / 1200.0f));
     const bool lowBatt = live && s.batteryPercent < 15.0f;
-    drawBar(12, 120, 96, 8, batteryAnim_, lowBatt ? blend(kBad, kTrack, pulse * 0.6f) : battColor);
-    spr_.setTextColor(kDim, kBg);
-    snprintf(buf, sizeof(buf), "MAX %d", static_cast<int>(roundf(s.maxSpeed)));
-    spr_.drawString(buf, 12, 110, 1);
-    snprintf(buf, sizeof(buf), "%.1fV", s.batteryVoltage);
-    spr_.setTextDatum(TR_DATUM);
-    spr_.drawString(buf, 108, 110, 1);
-    spr_.setTextDatum(TL_DATUM);
 
-    // --- Divider ------------------------------------------------------------
-    spr_.drawFastVLine(114, 8, h_ - 16, kTrack);
+    // Battery pill, top centre.
+    smooth(batteryAnim_, live ? s.batteryPercent / 100.0f : 0.0f, 6.0f);
+    const int barW = 100, barX = w_ / 2 - barW / 2, barY = 6, barH = 6;
+    spr_.fillRoundRect(barX, barY, barW, barH, 3, kGrey);
+    const int fillW = static_cast<int>(roundf(barW * batteryAnim_));
+    if (fillW >= barH) pill(barX, barY, fillW, barH, lowBatt ? blend(kRed, kGrey, pulse * 0.6f) : kTeal);
 
-    // --- Right column: battery percent (or fault banner), then readings ----
-    const int cx = 120;
+    // Corner readouts: trip distance and battery current.
+    snprintf(buf, sizeof(buf), "%.2f %s", s.tripDistance, distUnit(s.imperial));
+    text(buf, 6, 2, 2, TL_DATUM, live ? kAmberDim : kGrey);
+    snprintf(buf, sizeof(buf), "%.1f A", s.values.currentInput);
+    text(buf, w_ - 6, 2, 2, TR_DATUM, !live ? kGrey : (s.values.currentInput < -0.5f ? kBlue : kAmberDim));
+
+    // Speed
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(fabsf(s.speed))));
+    text(buf, w_ / 2, 22, 7, TC_DATUM, live ? kAmber : kGrey, live);
+
+    if (!live) {
+        text(s.everConnected ? "NO LINK" : "NO VESC", w_ / 2, 76, 4, TC_DATUM,
+             s.everConnected ? blend(kRed, kGrey, pulse) : kGrey, false);
+    } else if (s.speed < -0.5f) {
+        text("REVERSE", w_ / 2, 76, 4, TC_DATUM, kYellow);
+    } else {
+        text(speedUnit(s.imperial), w_ / 2, 76, 4, TC_DATUM, kAmber);
+    }
+
+    // Bottom row: ESC temp, motor temp, voltage, each with a status dot.
     if (fault) {
-        // Red banner with the fault name; the percent is still on the bar.
-        spr_.fillRect(cx - 2, 2, w_ - cx - 6, 25, blinkOn ? kBad : blend(kBad, kBg, 0.5f));
-        spr_.setTextDatum(TC_DATUM);
-        spr_.setTextColor(kFg, blinkOn ? kBad : blend(kBad, kBg, 0.5f));
-        spr_.drawString("FAULT", cx - 2 + (w_ - cx - 6) / 2, 4, 1);
-        spr_.drawString(vesc::faultName(s.values.fault), cx - 2 + (w_ - cx - 6) / 2, 15, 1);
-        spr_.setTextDatum(TL_DATUM);
+        snprintf(buf, sizeof(buf), "FAULT  %s", vesc::faultName(s.values.fault));
+        text(buf, w_ / 2, 110, 2, TC_DATUM, blinkOn ? kRed : blend(kRed, kBg, 0.5f));
     } else {
-        snprintf(buf, sizeof(buf), "%d%%", static_cast<int>(roundf(s.batteryPercent)));
-        spr_.setTextColor(lowBatt ? blend(kBad, kDim, pulse) : battColor, kBg);
-        spr_.drawString(buf, cx, 2, 4);
+        const int y = 110;
+        const int cx[3] = {40, 120, 200};
+        dot(cx[0] - 26, y + 7, 3, live ? tempColor(s.values.tempFet, s.settings.escWarn) : kGrey);
+        snprintf(buf, sizeof(buf), "%d`C", static_cast<int>(roundf(s.values.tempFet)));
+        text(buf, cx[0] - 18, y, 2, TL_DATUM, live ? kAmber : kGrey);
 
-        spr_.setTextDatum(TR_DATUM);
-        spr_.setTextColor(live ? kFg : kDim, kBg);
+        dot(cx[1] - 26, y + 7, 3, live ? tempColor(s.values.tempMotor, s.settings.motorWarn) : kGrey);
+        snprintf(buf, sizeof(buf), "%d`C", static_cast<int>(roundf(s.values.tempMotor)));
+        text(buf, cx[1] - 18, y, 2, TL_DATUM, live ? kAmber : kGrey);
+
+        dot(cx[2] - 26, y + 7, 3, live ? (lowBatt ? blend(kRed, kGrey, pulse) : kMagenta) : kGrey);
         snprintf(buf, sizeof(buf), "%.1fV", s.batteryVoltage);
-        spr_.drawString(buf, w_ - 4, 2, 2);
-        spr_.setTextColor(kDim, kBg);
-        snprintf(buf, sizeof(buf), "%.2fV/cell", s.cellVoltage);
-        spr_.drawString(buf, w_ - 4, 18, 1);
-        spr_.setTextDatum(TL_DATUM);
+        text(buf, cx[2] - 18, y, 2, TL_DATUM, live ? kAmber : kGrey);
     }
-
-    const uint16_t num = live ? kFg : kDim;
-    const int col2 = cx + 62;
-    const int r0 = 31, r1 = 65, r2 = 99;
-
-    snprintf(buf, sizeof(buf), "%.2f", s.values.ampHours - s.values.ampHoursCharged);
-    drawCell(cx, r0, "AH USED", buf, num);
-    if (s.tripDistance < 100.0f) snprintf(buf, sizeof(buf), "%.2f", s.tripDistance);
-    else snprintf(buf, sizeof(buf), "%.1f", s.tripDistance);
-    drawCell(col2, r0, s.imperial ? "TRIP MI" : "TRIP KM", buf, num);
-
-    snprintf(buf, sizeof(buf), "%.1f", s.values.currentInput);
-    const uint16_t currentColor = !live ? kDim : (s.values.currentInput < -0.5f ? kRegen : kFg);
-    drawCell(cx, r1, "BATTERY A", buf, currentColor);
-    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.powerW)));
-    const uint16_t powerColor = !live ? kDim : (s.powerW < -5.0f ? kRegen : kFg);
-    drawCell(col2, r1, "POWER W", buf, powerColor);
-
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempMotor)));
-    drawCell(cx, r2, "MOTOR", buf, live ? tempColor(s.values.tempMotor, 80, 100) : kDim);
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempFet)));
-    drawCell(col2, r2, "ESC", buf, live ? tempColor(s.values.tempFet, 70, 85) : kDim);
 }
 
-// ---------------------------------------------------------------------------
-// Secondary pages
-// ---------------------------------------------------------------------------
-
-void Dashboard::drawPagePower(const DashboardState &s) {
+void Dashboard::drawStats(const DashboardState &s) {
     char buf[32];
-    drawStatusBar(s);
     const bool live = s.connected;
-    const uint16_t num = live ? kFg : kDim;
-    const int colW = 78;
-    const int r0 = kStatusBarH + 6;
-    const int r1 = r0 + 36;
+    const uint16_t val = live ? kAmber : kGrey;
+    const int cx[3] = {40, 120, 200};
+    const int label0 = 10, value0 = 28, label1 = 72, value1 = 90;
 
-    snprintf(buf, sizeof(buf), "%.1f", s.values.currentMotor);
-    drawCell(6, r0, "MOTOR A", buf, num);
-    snprintf(buf, sizeof(buf), "%.1f", s.values.currentInput);
-    drawCell(6 + colW, r0, "BATTERY A", buf, s.values.currentInput < -0.5f ? kRegen : num);
-    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.powerW)));
-    drawCell(6 + colW * 2, r0, "POWER W", buf, s.powerW < -5.0f ? kRegen : num);
+    text("ESC", cx[0], label0, 2, TC_DATUM, kAmberDim);
+    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempFet)));
+    text(buf, cx[0], value0, 4, TC_DATUM, live ? (tempColor(s.values.tempFet, s.settings.escWarn) == kCyan ? kAmber : tempColor(s.values.tempFet, s.settings.escWarn)) : kGrey);
 
-    snprintf(buf, sizeof(buf), "%d%%", static_cast<int>(roundf(s.values.dutyCycle * 100.0f)));
-    drawCell(6, r1, "DUTY", buf, fabsf(s.values.dutyCycle) > 0.9f ? kWarn : num);
-    snprintf(buf, sizeof(buf), "%d", static_cast<int>(s.values.erpm));
-    drawCell(6 + colW, r1, "ERPM", buf, num);
+    text("MOTOR", cx[1], label0, 2, TC_DATUM, kAmberDim);
+    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempMotor)));
+    text(buf, cx[1], value0, 4, TC_DATUM, live ? (tempColor(s.values.tempMotor, s.settings.motorWarn) == kCyan ? kAmber : tempColor(s.values.tempMotor, s.settings.motorWarn)) : kGrey);
+
+    text("VOLT", cx[2], label0, 2, TC_DATUM, kAmberDim);
     snprintf(buf, sizeof(buf), "%.1f", s.batteryVoltage);
-    drawCell(6 + colW * 2, r1, "VOLTAGE", buf, num);
+    text(buf, cx[2], value0, 4, TC_DATUM, val);
 
-    // Animated bars: duty (0..1), battery current (bipolar, 40 A full scale).
-    smooth(dutyAnim_, live ? fabsf(s.values.dutyCycle) : 0.0f, 10.0f);
-    smooth(battAAnim_, live ? s.values.currentInput / 40.0f : 0.0f, 10.0f);
-    spr_.setTextColor(kDim, kBg);
-    spr_.drawString("DUTY", 6, h_ - 30, 1);
-    drawBar(40, h_ - 30, w_ - 52, 7, dutyAnim_, dutyAnim_ > 0.9f ? kWarn : kAccent);
-    spr_.drawString("AMPS", 6, h_ - 18, 1);
-    drawBipolarBar(40, h_ - 18, w_ - 52, 7, battAAnim_, kAccent, kRegen);
+    text("POWER", cx[0], label1, 2, TC_DATUM, kAmberDim);
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.powerW)));
+    text(buf, cx[0], value1, 4, TC_DATUM, !live ? kGrey : (s.powerW < -5.0f ? kBlue : kAmber));
+
+    text("AMPS", cx[1], label1, 2, TC_DATUM, kAmberDim);
+    snprintf(buf, sizeof(buf), "%.1f", s.values.currentInput);
+    text(buf, cx[1], value1, 4, TC_DATUM, !live ? kGrey : (s.values.currentInput < -0.5f ? kBlue : kAmber));
+
+    text("AH USED", cx[2], label1, 2, TC_DATUM, kAmberDim);
+    snprintf(buf, sizeof(buf), "%.2f", s.values.ampHours - s.values.ampHoursCharged);
+    text(buf, cx[2], value1, 4, TC_DATUM, val);
 }
 
-void Dashboard::drawPageTrip(const DashboardState &s) {
-    char buf[32];
-    drawStatusBar(s);
-    const uint16_t num = s.connected ? kFg : kDim;
-    const int colW = 78;
-    const int r0 = kStatusBarH + 6;
-    const int r1 = r0 + 36;
-    const int r2 = r1 + 36;
-
+void Dashboard::drawTrip(const DashboardState &s) {
+    char buf[48];
+    const bool live = s.connected;
     if (s.tripDistance < 100.0f) snprintf(buf, sizeof(buf), "%.2f", s.tripDistance);
     else snprintf(buf, sizeof(buf), "%.1f", s.tripDistance);
-    drawCell(6, r0, s.imperial ? "TRIP MI" : "TRIP KM", buf, num);
-    snprintf(buf, sizeof(buf), "%.2f", s.values.ampHours - s.values.ampHoursCharged);
-    drawCell(6 + colW, r0, "USED AH", buf, num);
-    snprintf(buf, sizeof(buf), "%.1f", s.values.wattHours - s.values.wattHoursCharged);
-    drawCell(6 + colW * 2, r0, "USED WH", buf, num);
-
-    snprintf(buf, sizeof(buf), "%.1f", s.whPerDistance);
-    drawCell(6, r1, s.imperial ? "WH PER MI" : "WH PER KM", buf, num);
-    snprintf(buf, sizeof(buf), "%.2f", s.values.ampHoursCharged);
-    drawCell(6 + colW, r1, "REGEN AH", buf, s.values.ampHoursCharged > 0.001f ? kRegen : num);
-    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.maxSpeed)));
-    drawCell(6 + colW * 2, r1, s.imperial ? "MAX MPH" : "MAX KM/H", buf, num);
-
-    spr_.setTextColor(kDim, kBg);
-    spr_.drawString("COUNTERS RESET WHEN THE VESC POWERS OFF", 6, r2 + 2, 1);
+    text(buf, w_ / 2, 16, 7, TC_DATUM, live ? kAmber : kGrey, live);
+    text(distUnit(s.imperial), w_ / 2, 70, 4, TC_DATUM, kAmber);
+    snprintf(buf, sizeof(buf), "MAX %d   %.1f WH/%s   %.2f AH", static_cast<int>(roundf(s.maxSpeed)), s.whPerDistance,
+             s.imperial ? "MI" : "KM", s.values.ampHours - s.values.ampHoursCharged);
+    text(buf, w_ / 2, 108, 2, TC_DATUM, kAmberDim);
 }
 
-void Dashboard::drawPageSystem(const DashboardState &s) {
-    char buf[40];
-    drawStatusBar(s);
+void Dashboard::drawGForce(const DashboardState &s) {
+    char buf[32];
     const bool live = s.connected;
-    const uint16_t num = live ? kFg : kDim;
-    const int colW = 78;
-    const int r0 = kStatusBarH + 6;
-    const int r1 = r0 + 36;
-    const int r2 = r1 + 36;
+    text("G-FORCE", w_ / 2, 4, 2, TC_DATUM, kAmber);
 
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempFet)));
-    drawCell(6, r0, "ESC TEMP", buf, live ? tempColor(s.values.tempFet, 70, 85) : kDim);
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempMotor)));
-    drawCell(6 + colW, r0, "MOTOR TEMP", buf, live ? tempColor(s.values.tempMotor, 80, 100) : kDim);
-    snprintf(buf, sizeof(buf), "%d", s.values.controllerId);
-    drawCell(6 + colW * 2, r0, "VESC ID", buf, num);
+    smooth(gAnim_, live ? s.accelG : 0.0f, 10.0f);
+    snprintf(buf, sizeof(buf), "%.2f", fabsf(gAnim_));
+    text(buf, 62, 30, 7, TC_DATUM, live ? kAmber : kGrey, live);
+    snprintf(buf, sizeof(buf), "PEAK %.2f G", s.peakG);
+    text(buf, 62, 94, 2, TC_DATUM, kAmberDim);
 
-    snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(s.packetsOk));
-    drawCell(6, r1, "PACKETS", buf, num);
-    snprintf(buf, sizeof(buf), "%lu", static_cast<unsigned long>(s.crcErrors));
-    drawCell(6 + colW, r1, "CRC ERRORS", buf, s.crcErrors > 0 ? kWarn : num);
-    snprintf(buf, sizeof(buf), "%lu:%02lu", static_cast<unsigned long>(s.uptimeS / 60),
-             static_cast<unsigned long>(s.uptimeS % 60));
-    drawCell(6 + colW * 2, r1, "UPTIME", buf, kFg);
+    // Crosshair: the dot moves up when accelerating, down when braking.
+    const int cx = 180, cy = 72, r = 32;
+    ring(cx, cy, r - 1.5f, r + 0.5f, 0.0f, 360.0f, kBlue, true);
+    spr_.drawFastHLine(cx - r + 6, cy, 2 * r - 12, blend(kBg, kBlue, 0.5f));
+    spr_.drawFastVLine(cx, cy - r + 6, 2 * r - 12, blend(kBg, kBlue, 0.5f));
+    const float g = gAnim_ < -1.0f ? -1.0f : (gAnim_ > 1.0f ? 1.0f : gAnim_);
+    dot(cx, cy - static_cast<int>(roundf(g * (r - 6))), 4, live ? kTeal : kGrey);
+}
 
-    // Temperature bars (0..100 C) and the last fault since boot.
-    smooth(motorAnim_, live ? s.values.tempMotor / 100.0f : 0.0f, 6.0f);
-    spr_.setTextColor(kDim, kBg);
-    spr_.drawString("MOTOR", 6, r2 + 2, 1);
-    drawBar(46, r2 + 2, 120, 7, motorAnim_, tempColor(s.values.tempMotor, 80, 100) == kFg ? kAccent : tempColor(s.values.tempMotor, 80, 100));
+void Dashboard::drawBattery(const DashboardState &s) {
+    char buf[40];
+    const bool live = s.connected;
+    text("BATTERY", 10, 8, 2, TL_DATUM, kAmber);
+    snprintf(buf, sizeof(buf), "%d S", s.settings.cells);
+    box(178, 4, 48, 20, kAmber, false);
+    text(buf, 202, 6, 2, TC_DATUM, kAmber);
 
-    if (s.lastFault != vesc::FAULT_NONE) {
-        spr_.setTextColor(kWarn, kBg);
-        snprintf(buf, sizeof(buf), "LAST FAULT: %s", vesc::faultName(s.lastFault));
-    } else {
-        spr_.setTextColor(kDim, kBg);
-        snprintf(buf, sizeof(buf), "NO FAULTS SINCE BOOT");
+    snprintf(buf, sizeof(buf), "Pack: %.1f V", s.batteryVoltage);
+    text(buf, 10, 34, 2, TL_DATUM, live ? kAmber : kGrey);
+    snprintf(buf, sizeof(buf), "Cell: %.3f V", s.cellVoltage);
+    text(buf, 10, 52, 2, TL_DATUM, live ? kAmber : kGrey);
+    snprintf(buf, sizeof(buf), "%d%%", static_cast<int>(roundf(s.batteryPercent)));
+    text(buf, 10, 72, 4, TL_DATUM, live ? cellColor(s.cellVoltage) : kGrey);
+
+    text("GREEN   >= 3.75V", 10, 104, 1, TL_DATUM, kGreen, false);
+    text("YELLOW  3.45-3.74V", 10, 114, 1, TL_DATUM, kYellow, false);
+    text("RED     < 3.45V", 10, 124, 1, TL_DATUM, kRed, false);
+
+    // Vertical level bar on the right.
+    smooth(batteryAnim_, live ? s.batteryPercent / 100.0f : 0.0f, 6.0f);
+    const int bx = 214, by = 32, bw = 10, bh = 96;
+    spr_.fillRoundRect(bx, by, bw, bh, 4, kGrey);
+    const int fillH = static_cast<int>(roundf(bh * batteryAnim_));
+    if (fillH >= bw) {
+        const uint16_t c = live ? cellColor(s.cellVoltage) : kGrey;
+        spr_.fillRoundRect(bx, by + bh - fillH, bw, fillH, 4, c);
+        if (glowEnabled_) mask_.fillRoundRect(bx, by + bh - fillH, bw, fillH, 4, c);
     }
-    spr_.drawString(buf, 6, r2 + 14, 1);
+}
+
+void Dashboard::drawSettings(const DashboardState &s) {
+    char buf[32];
+    const int pages = settingsPageCount();
+    const int page = s.settingsIndex / kSettingsPerPage;
+    snprintf(buf, sizeof(buf), "SETTINGS %d/%d", page + 1, pages);
+    text(buf, w_ / 2, 8, 2, TC_DATUM, kAmber);
+
+    // Button hints, like the touch buttons on the reference design.
+    box(6, 4, 22, 18, kAmber, false);
+    text(">", 17, 5, 2, TC_DATUM, kAmber);
+    box(w_ - 28, 4, 22, 18, kAmber, false);
+    text("X", w_ - 17, 5, 2, TC_DATUM, kAmber);
+
+    for (int row = 0; row < kSettingsPerPage; row++) {
+        const int index = page * kSettingsPerPage + row;
+        if (index >= kSettingItemCount) break;
+        const SettingItem &it = kSettingItems[index];
+        const bool selected = index == s.settingsIndex;
+        const int y = 30 + row * 23;
+        text(it.name, 14, y + 3, 2, TL_DATUM, selected ? kAmber : kAmberDim, selected);
+
+        settingFormat(s.settings, index, buf, sizeof(buf));
+        if (it.kind == SettingKind::Toggle) {
+            // Pill toggle: filled when on, knob at the right.
+            const bool on = s.settings.*(it.flag);
+            const int tx = 184, tw = 40, th = 16;
+            if (on) {
+                pill(tx, y + 3, tw, th, selected ? kAmber : kAmberDim);
+                spr_.fillCircle(tx + tw - 8, y + 3 + th / 2, 5, kBg);
+            } else {
+                spr_.drawRoundRect(tx, y + 3, tw, th, th / 2, selected ? kAmber : kAmberDim);
+                dot(tx + 8, y + 3 + th / 2, 5, selected ? kAmber : kAmberDim);
+            }
+        } else {
+            box(166, y, 60, 22, selected ? kAmber : kAmberDim, selected, selected);
+            text(buf, 196, y + 3, 2, TC_DATUM, selected ? kBg : kAmber, false);
+        }
+    }
+
+    // Scroll indicator
+    const int sx = w_ - 4, sy = 30, sh = 92;
+    spr_.drawFastVLine(sx, sy, sh, kGrey);
+    const int thumbH = sh / pages;
+    spr_.fillRect(sx - 1, sy + thumbH * page, 3, thumbH, kAmber);
+
+    text("LEFT: CHANGE   RIGHT: NEXT   HOLD: EXIT", w_ / 2, 125, 1, TC_DATUM, kGrey, false);
 }
