@@ -18,7 +18,6 @@ constexpr uint16_t kRegen = 0x3D9F;    // light blue
 constexpr int kStatusBarH = 18;
 
 const char *speedUnit(bool imperial) { return imperial ? "mph" : SPEED_UNIT_LABEL; }
-const char *distUnit(bool imperial) { return imperial ? "mi" : "km"; }
 }  // namespace
 
 void Dashboard::begin(uint8_t rotation) {
@@ -149,47 +148,46 @@ void Dashboard::drawPageMain(const DashboardState &s) {
     spr_.drawString(buf, 100, 2, 7);
     spr_.setTextDatum(TL_DATUM);
 
+    // Column right of the digits: unit, status/max line, voltage or fault.
     spr_.setTextColor(kDim, kBg);
-    spr_.drawString(speedUnit(s.imperial), 106, 4, 2);
+    spr_.drawString(speedUnit(s.imperial), 106, 2, 2);
 
-    // Second line under the unit: link / fault state, or max speed.
     if (!live) {
         spr_.setTextColor(s.everConnected ? kBad : kDim, kBg);
-        spr_.drawString(s.everConnected ? "LINK LOST" : "NO VESC", 106, 20, 2);
+        spr_.drawString(s.everConnected ? "NO LINK" : "NO VESC", 106, 18, 2);
     } else if (s.values.fault != vesc::FAULT_NONE) {
         spr_.setTextColor(kBad, kBg);
-        spr_.drawString("FAULT", 106, 20, 2);
+        spr_.drawString("FAULT", 106, 18, 2);
     } else if (s.speed < -0.5f) {
         spr_.setTextColor(kWarn, kBg);
-        spr_.drawString("REVERSE", 106, 20, 2);
+        spr_.drawString("REVERSE", 106, 18, 2);
     } else {
         snprintf(buf, sizeof(buf), "max %d", static_cast<int>(roundf(s.maxSpeed)));
         spr_.setTextColor(kDim, kBg);
-        spr_.drawString(buf, 106, 20, 2);
+        spr_.drawString(buf, 106, 18, 2);
     }
 
-    // --- Battery: percent, gauge, pack and cell voltage ------------------
+    if (live && s.values.fault != vesc::FAULT_NONE) {
+        spr_.setTextColor(kBad, kBg);
+        spr_.drawString(vesc::faultName(s.values.fault), 106, 34, 2);
+    } else {
+        snprintf(buf, sizeof(buf), "%.1fV %.2fV/c", s.batteryVoltage, s.cellVoltage);
+        spr_.setTextColor(numColor, kBg);
+        spr_.drawString(buf, 106, 34, 2);
+    }
+
+    // --- Battery: percent top right, gauge under it ----------------------
     const uint16_t battColor = live ? batteryColor(s.batteryPercent) : kDim;
     snprintf(buf, sizeof(buf), "%d%%", static_cast<int>(roundf(s.batteryPercent)));
     spr_.setTextColor(battColor, kBg);
     spr_.setTextDatum(TR_DATUM);
-    spr_.drawString(buf, 194, 4, 4);
+    spr_.drawString(buf, w_ - 10, 2, 4);
     spr_.setTextDatum(TL_DATUM);
-    drawBattery(200, 8, 30, 16, s.batteryPercent, live);
-
-    snprintf(buf, sizeof(buf), "%.1fV %.2fV/c", s.batteryVoltage, s.cellVoltage);
-    spr_.setTextColor(numColor, kBg);
-    spr_.drawString(buf, 126, 32, 2);
-
-    // Fault name takes the line the voltage would otherwise share.
-    if (live && s.values.fault != vesc::FAULT_NONE) {
-        spr_.setTextColor(kBad, kBg);
-        spr_.setTextDatum(TR_DATUM);
-        spr_.drawString(vesc::faultName(s.values.fault), w_ - 12, 48, 2);
-        spr_.setTextDatum(TL_DATUM);
+    if (!(live && s.values.fault != vesc::FAULT_NONE)) {
+        drawBattery(w_ - 34, 36, 26, 14, s.batteryPercent, live);  // fault text uses this space
     }
 
-    spr_.drawFastHLine(0, 52, w_ - 10, kDim);
+    spr_.drawFastHLine(0, 53, w_ - 10, kDim);
 
     // --- Live readings grid, 3 columns x 2 rows ---------------------------
     const int colW = 78;
@@ -254,19 +252,23 @@ void Dashboard::drawPageTrip(const DashboardState &s) {
     const int y1 = kStatusBarH + 50;
     const int colW = w_ / 3;
 
-    snprintf(buf, sizeof(buf), "%.2f%s", s.tripDistance, distUnit(s.imperial));
-    drawLabelValue(4, y0, "TRIP", buf, c);
-    snprintf(buf, sizeof(buf), "%.2fAh", s.values.ampHours - s.values.ampHoursCharged);
-    drawLabelValue(4 + colW, y0, "USED", buf, c);
-    snprintf(buf, sizeof(buf), "%.1fWh", s.values.wattHours - s.values.wattHoursCharged);
-    drawLabelValue(4 + colW * 2, y0, "ENERGY", buf, c);
+    if (s.tripDistance < 100.0f) {
+        snprintf(buf, sizeof(buf), "%.2f", s.tripDistance);
+    } else {
+        snprintf(buf, sizeof(buf), "%.1f", s.tripDistance);
+    }
+    drawLabelValue(4, y0, s.imperial ? "TRIP MI" : "TRIP KM", buf, c);
+    snprintf(buf, sizeof(buf), "%.2f", s.values.ampHours - s.values.ampHoursCharged);
+    drawLabelValue(4 + colW, y0, "USED AH", buf, c);
+    snprintf(buf, sizeof(buf), "%.1f", s.values.wattHours - s.values.wattHoursCharged);
+    drawLabelValue(4 + colW * 2, y0, "USED WH", buf, c);
 
     snprintf(buf, sizeof(buf), "%.1f", s.whPerDistance);
     drawLabelValue(4, y1, s.imperial ? "WH/MI" : "WH/KM", buf, c);
-    snprintf(buf, sizeof(buf), "%.2fAh", s.values.ampHoursCharged);
-    drawLabelValue(4 + colW, y1, "REGEN", buf, s.values.ampHoursCharged > 0.001f ? kRegen : c);
-    snprintf(buf, sizeof(buf), "%d%s", static_cast<int>(roundf(s.maxSpeed)), speedUnit(s.imperial));
-    drawLabelValue(4 + colW * 2, y1, "MAX", buf, c);
+    snprintf(buf, sizeof(buf), "%.2f", s.values.ampHoursCharged);
+    drawLabelValue(4 + colW, y1, "REGEN AH", buf, s.values.ampHoursCharged > 0.001f ? kRegen : c);
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.maxSpeed)));
+    drawLabelValue(4 + colW * 2, y1, s.imperial ? "MAX MPH" : "MAX KM/H", buf, c);
 
     // Trip counters reset when the VESC reboots; say so.
     spr_.setTextColor(kDim, kBg);
@@ -280,10 +282,10 @@ void Dashboard::drawPageSystem(const DashboardState &s) {
     const int y1 = kStatusBarH + 50;
     const int colW = w_ / 3;
 
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempFet)));
-    drawLabelValue(4, y0, "ESC TEMP", buf, s.connected ? tempColor(s.values.tempFet, 70, 85) : kDim);
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempMotor)));
-    drawLabelValue(4 + colW, y0, "MOTOR TEMP", buf, s.connected ? tempColor(s.values.tempMotor, 80, 100) : kDim);
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.values.tempFet)));
+    drawLabelValue(4, y0, "ESC `C", buf, s.connected ? tempColor(s.values.tempFet, 70, 85) : kDim);
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.values.tempMotor)));
+    drawLabelValue(4 + colW, y0, "MOTOR `C", buf, s.connected ? tempColor(s.values.tempMotor, 80, 100) : kDim);
     snprintf(buf, sizeof(buf), "%d", s.values.controllerId);
     drawLabelValue(4 + colW * 2, y0, "VESC ID", buf, c);
 

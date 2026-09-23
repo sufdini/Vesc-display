@@ -3,3 +3,5 @@
 *.pyc
 __pycache__/
 .DS_Store
+.sim_build/
+sim_out/

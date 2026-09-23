@@ -8,6 +8,10 @@ on a colour TFT.
 Built for the **LilyGO TTGO T-Display** (ESP32 + 1.14" 135x240 ST7789), but
 the protocol code is board-agnostic and the TFT setup is a few build flags.
 
+![Simulated ride](docs/demo.gif)
+
+*Rendered by the PC simulator: the real firmware drawing with the real fonts.*
+
 ## Screens
 
 Press the right button to go to the next page, the left button to go back.
@@ -83,7 +87,47 @@ decoding, speed / distance / battery maths):
 pio test -e native
 ```
 
-## Bench testing without a VESC
+## Testing on a PC, no hardware needed
+
+The whole firmware runs on a desktop. `src/sim` contains stand-ins for the
+Arduino runtime and for TFT_eSPI (using the original TFT_eSPI fonts, so text
+is pixel identical), plus a fake VESC that answers `COMM_GET_VALUES` with a
+scripted ride: boot without a VESC, accelerate, cruise, brake with regen,
+flick through the pages, throw an `OVER_TEMP_FET` fault, lose the link.
+
+```sh
+pip install pillow
+python3 tools/run_sim.py --open
+```
+
+That compiles the simulator with whatever C++ compiler is on the PATH (or
+PlatformIO if none is), plays the ride, and writes `sim_out/demo.gif` and one
+PNG per page. Change something in `src/Dashboard.cpp`, run it again, look.
+
+| Main | Power |
+| ---- | ----- |
+| ![](docs/page-main.png) | ![](docs/page-power.png) |
+
+| Trip | System |
+| ---- | ------ |
+| ![](docs/page-trip.png) | ![](docs/page-system.png) |
+
+| Fault | Link lost |
+| ----- | --------- |
+| ![](docs/page-fault.png) | ![](docs/page-nolink.png) |
+
+### Fully automatic: GitHub Actions
+
+Every push runs `.github/workflows/ci.yml`, which:
+
+1. runs the protocol unit tests,
+2. compiles the ESP32 firmware and uploads `firmware.bin` as an artifact,
+3. builds and runs the PC simulator and uploads the demo GIF and page PNGs.
+
+Open the *Actions* tab on GitHub, pick the latest run, and download the
+artifacts. No tools need to be installed locally.
+
+## Bench testing with a real board but no VESC
 
 `tools/vesc_sim.py` pretends to be a VESC on a USB-serial adapter and plays a
 synthetic ride (accelerate, cruise, brake with regen, stop) with a slowly
@@ -108,8 +152,11 @@ lib/VescUart/             VESC UART protocol (host-testable, no Arduino deps)
   VescUart.*              Arduino Stream client that polls the VESC
 src/Dashboard.*           TFT_eSPI dashboard renderer (sprite based, no flicker)
 src/main.cpp              firmware entry point, buttons, polling loop
+src/sim/                  PC simulator: Arduino + TFT_eSPI stand-ins, fake VESC
 test/test_protocol/       Unity tests for the protocol library
-tools/vesc_sim.py         fake VESC for bench testing
+tools/run_sim.py          one-command PC test: build, simulate, make GIF
+tools/vesc_sim.py         fake VESC over USB-serial for bench testing a real board
+.github/workflows/ci.yml  tests, firmware build and simulator demo on every push
 ```
 
 ## Adapting to another board or screen

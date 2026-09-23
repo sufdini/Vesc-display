@@ -1,0 +1,7 @@
+The font files in this directory (Font16.inc, Font32rle.inc, Font7srle.inc) are
+copied unmodified (only renamed from .c to .inc) from the TFT_eSPI library by Bodmer:
+https://github.com/Bodmer/TFT_eSPI
+
+TFT_eSPI is released under the MIT licence (see license.txt in that repo).
+They are used here only by the PC simulator so that text renders exactly as
+it does on the real display.
