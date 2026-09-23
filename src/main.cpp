@@ -128,7 +128,6 @@ void setup() {
     prevButton.begin();
 
     dashboard.begin(SCREEN_ROTATION);
-    dashboard.showSplash("VESC DISPLAY", "waiting for VESC...");
 
     state.imperial = USE_IMPERIAL_UNITS != 0;
 }

@@ -43,6 +43,9 @@
 // Text shown next to the speed in metric mode ("km/t" for Danish/Norwegian).
 #define SPEED_UNIT_LABEL "km/h"
 
+// Speed at which the gauge arc is full, in the unit selected above.
+#define SPEED_GAUGE_MAX 50.0f
+
 // ---- Board (LilyGO T-Display) ----------------------------------------------
 #define BUTTON_NEXT_PIN 35   // right button: cycle pages
 #define BUTTON_PREV_PIN 0    // left button: previous page

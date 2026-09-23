@@ -18,13 +18,15 @@ Press the right button to go to the next page, the left button to go back.
 
 | Page   | Shows                                                                 |
 | ------ | --------------------------------------------------------------------- |
-| Main   | Everything live on one screen: speed, battery % with gauge, pack and per-cell voltage, Ah used, distance driven, battery current, hub motor temperature, ESC temperature, power. Link loss and fault codes replace the max-speed line. |
+| Main   | Everything live on one screen: an anti-aliased speed gauge with a colour graded arc and peak marker, battery % and bar, pack and per-cell voltage, Ah used, distance driven, battery current, power, hub motor and ESC temperature. A red banner shows fault codes; link loss and low battery pulse. |
 | Power  | Motor current, battery current, power, duty cycle (with bar), ERPM, pack voltage |
 | Trip   | Distance, Ah used, Wh used, Wh/km (or Wh/mi), regenerated Ah, max speed |
 | System | ESC and motor temperature, VESC controller id, packet / CRC counters, uptime, last fault since boot |
 
-All values refresh ten times a second. Distance and Ah counters come from
-the VESC and reset when it is power cycled.
+All values refresh ten times a second and the screen redraws at 20 fps. On
+boot the gauge sweeps to full scale and back, pages slide in from the side,
+bars ease towards their targets, and warnings blink or pulse. Distance and
+Ah counters come from the VESC and reset when it is power cycled.
 
 On the other pages a status bar at the top shows the link state (green dot = live data,
 red = link lost), pack and per-cell voltage or the active **fault code**, and
@@ -59,6 +61,7 @@ Edit `include/config.h`:
 | `BATTERY_CELLS`       | Series cell count (10S = 10).                               |
 | `USE_IMPERIAL_UNITS`  | `0` for km/h and km, `1` for mph and miles.                 |
 | `SPEED_UNIT_LABEL`    | Text next to the speed in metric mode, e.g. `"km/t"`.        |
+| `SPEED_GAUGE_MAX`     | Speed at which the gauge arc is full.                       |
 | `VESC_UART_BAUD`      | Must match the VESC UART app setting.                       |
 | `VESC_TIMEOUT_MS`     | Time without data before the display reports a lost link.   |
 
@@ -93,7 +96,8 @@ The whole firmware runs on a desktop. `src/sim` contains stand-ins for the
 Arduino runtime and for TFT_eSPI (using the original TFT_eSPI fonts, so text
 is pixel identical), plus a fake VESC that answers `COMM_GET_VALUES` with a
 scripted ride: boot without a VESC, accelerate, cruise, brake with regen,
-flick through the pages, throw an `OVER_TEMP_FET` fault, lose the link.
+flick through the pages, throw an `OVER_TEMP_FET` fault, run the battery
+low, lose the link.
 
 ```sh
 pip install pillow
@@ -112,9 +116,9 @@ PNG per page. Change something in `src/Dashboard.cpp`, run it again, look.
 | ---- | ------ |
 | ![](docs/page-trip.png) | ![](docs/page-system.png) |
 
-| Fault | Link lost |
-| ----- | --------- |
-| ![](docs/page-fault.png) | ![](docs/page-nolink.png) |
+| Fault | Low battery | Link lost |
+| ----- | ----------- | --------- |
+| ![](docs/page-fault.png) | ![](docs/page-lowbatt.png) | ![](docs/page-nolink.png) |
 
 ### Fully automatic: GitHub Actions
 

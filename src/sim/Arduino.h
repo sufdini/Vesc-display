@@ -75,6 +75,7 @@ void pressButton(uint8_t pin, uint32_t ms);
 void setVescOnline(bool online);
 void setVescFault(uint8_t fault);
 void setMotorPoles(int poles);
+void setVoltageOverride(float volts);  // <= 0 disables
 
 // Synthetic ride model: what the fake VESC reports at virtual time t.
 struct RideSample {

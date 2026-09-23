@@ -7,8 +7,11 @@ extern const unsigned char widtbl_f16[96];
 extern const unsigned char *const chrtbl_f16[96];
 extern const unsigned char widtbl_f32[96];
 extern const unsigned char *const chrtbl_f32[96];
+extern const unsigned char widtbl_f64[96];
+extern const unsigned char *const chrtbl_f64[96];
 extern const unsigned char widtbl_f7s[96];
 extern const unsigned char *const chrtbl_f7s[96];
+const unsigned char *glcdFontData();
 
 namespace {
 
@@ -25,6 +28,7 @@ bool fontInfo(uint8_t font, FontInfo &out) {
     switch (font) {
         case 2: out = {chrtbl_f16, widtbl_f16, 16, 13, false}; return true;
         case 4: out = {chrtbl_f32, widtbl_f32, 26, 19, true}; return true;
+        case 6: out = {chrtbl_f64, widtbl_f64, 48, 36, true}; return true;
         case 7: out = {chrtbl_f7s, widtbl_f7s, 48, 47, true}; return true;
         default: return false;
     }
@@ -48,7 +52,34 @@ void *TFT_eSprite::createSprite(int w, int h) {
     w_ = w;
     h_ = h;
     buf_.assign(static_cast<size_t>(w) * h, 0);
+    resetViewport();
     return buf_.data();
+}
+
+void TFT_eSprite::setViewport(int x, int y, int w, int h, bool vpDatum) {
+    // Same rules as TFT_eSPI: clip the viewport to the sprite, drawing is
+    // offset by the (unclipped) datum when vpDatum is true.
+    xDatum_ = vpDatum ? x : 0;
+    yDatum_ = vpDatum ? y : 0;
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > w_) w = w_ - x;
+    if (y + h > h_) h = h_ - y;
+    if (w < 1 || h < 1) {
+        vpW_ = vpH_ = 0;  // entirely off screen: draw nothing
+        return;
+    }
+    vpX_ = x;
+    vpY_ = y;
+    vpW_ = w;
+    vpH_ = h;
+}
+
+void TFT_eSprite::resetViewport() {
+    xDatum_ = yDatum_ = 0;
+    vpX_ = vpY_ = 0;
+    vpW_ = w_;
+    vpH_ = h_;
 }
 
 void TFT_eSprite::fillSprite(uint16_t color) { std::fill(buf_.begin(), buf_.end(), color); }
@@ -61,7 +92,9 @@ void TFT_eSprite::pushSprite(int, int) {
 }
 
 void TFT_eSprite::drawPixel(int x, int y, uint16_t color) {
-    if (x < 0 || y < 0 || x >= w_ || y >= h_) return;
+    x += xDatum_;
+    y += yDatum_;
+    if (x < vpX_ || y < vpY_ || x >= vpX_ + vpW_ || y >= vpY_ + vpH_) return;
     buf_[static_cast<size_t>(y) * w_ + x] = color;
 }
 
@@ -147,11 +180,13 @@ void TFT_eSprite::fillCircle(int x0, int y0, int r, uint16_t color) {
 }
 
 int16_t TFT_eSprite::fontHeight(uint8_t font) const {
+    if (font == 1) return 8;
     FontInfo fi;
     return fontInfo(font, fi) ? fi.height : 0;
 }
 
 int16_t TFT_eSprite::textWidth(const char *s, uint8_t font) const {
+    if (font == 1) return static_cast<int16_t>(6 * strlen(s));
     FontInfo fi;
     if (!fontInfo(font, fi)) return 0;
     int w = 0;
@@ -164,6 +199,22 @@ int16_t TFT_eSprite::textWidth(const char *s, uint8_t font) const {
 
 // Character rendering follows TFT_eSprite::drawChar for textsize 1.
 int16_t TFT_eSprite::drawChar(uint16_t c, int x, int y, uint8_t font) {
+    if (font == 1) {
+        // Classic 5x7 GLCD font in a 6x8 cell, columns of 8 bits, LSB at top.
+        if (c > 255) return 0;
+        if (c > 175) c++;  // TFT_eSPI default (_cp437 == false) quirk
+        const unsigned char *glyph = glcdFontData() + c * 5;
+        const bool drawBg = textColor_ != textBg_;
+        for (int i = 0; i < 6; i++) {
+            unsigned char line = i == 5 ? 0 : glyph[i];
+            for (int j = 0; j < 8; j++) {
+                if (line & 1) drawPixel(x + i, y + j, textColor_);
+                else if (drawBg) drawPixel(x + i, y + j, textBg_);
+                line >>= 1;
+            }
+        }
+        return 6;
+    }
     FontInfo fi;
     if (!fontInfo(font, fi)) return 0;
     if (c < 32 || c > 127) return 0;
@@ -211,10 +262,9 @@ int16_t TFT_eSprite::drawChar(uint16_t c, int x, int y, uint8_t font) {
 }
 
 int16_t TFT_eSprite::drawString(const char *s, int x, int y, uint8_t font) {
-    FontInfo fi;
-    if (!fontInfo(font, fi)) return 0;
     const int cwidth = textWidth(s, font);
-    const int cheight = fi.height;
+    const int cheight = fontHeight(font);
+    if (cheight == 0) return 0;
 
     switch (datum_) {
         case TC_DATUM: x -= cwidth / 2; break;

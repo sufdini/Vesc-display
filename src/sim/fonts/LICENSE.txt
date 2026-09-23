@@ -1,4 +1,4 @@
-The font files in this directory (Font16.inc, Font32rle.inc, Font7srle.inc) are
+The font files in this directory (Font16.inc, Font32rle.inc, Font64rle.inc, Font7srle.inc, glcdfont.inc) are
 copied unmodified (only renamed from .c to .inc) from the TFT_eSPI library by Bodmer:
 https://github.com/Bodmer/TFT_eSPI
 

@@ -22,6 +22,7 @@ int g_motorPoles = 14;
 
 int32_t g_lastTacho = 0;
 bool g_quiet = false;
+float g_voltageOverride = 0.0f;
 
 }  // namespace
 
@@ -49,6 +50,7 @@ void pressButton(uint8_t pin, uint32_t ms) { g_buttons[pin].releaseAt = g_millis
 void setVescOnline(bool online) { g_vescOnline = online; }
 void setVescFault(uint8_t fault) { g_vescFault = fault; }
 void setMotorPoles(int poles) { g_motorPoles = poles; }
+void setVoltageOverride(float volts) { g_voltageOverride = volts; }
 
 RideSample rideAt(float t, int poles) {
     // 40 second cycle: accelerate, cruise, brake with regen, stand still.
@@ -111,6 +113,7 @@ void buildGetValuesReply(std::deque<uint8_t> &out) {
     const float motorRpm = s.erpm / (g_motorPoles / 2.0f);
     g_lastTacho += static_cast<int32_t>(motorRpm / 60.0f * dt * 3.0f * g_motorPoles);
     s.tacho = g_lastTacho;
+    if (g_voltageOverride > 0.0f) s.voltage = g_voltageOverride;
 
     std::deque<uint8_t> p;
     p.push_back(vesc::COMM_GET_VALUES);

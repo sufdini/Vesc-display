@@ -60,14 +60,15 @@ const Event kScript[] = {
     {36.0f, "next"},          // back to Main
     {43.0f, "fault"},         // OVER_TEMP_FET for a few seconds
     {46.5f, "fault-clear"},
-    {48.0f, "vesc-offline"},  // link lost at the end
+    {47.0f, "low-battery"},   // pack reads 34 V: low battery warning
+    {51.0f, "vesc-offline"},  // link lost at the end
 };
 
 }  // namespace
 
 int main(int argc, char **argv) {
     std::string outDir = "sim_out";
-    float seconds = 52.0f;
+    float seconds = 55.0f;
     int fps = 8;
     bool quiet = false;
     for (int i = 1; i < argc; i++) {
@@ -102,6 +103,7 @@ int main(int argc, char **argv) {
             else if (!strcmp(what, "prev")) sim::pressButton(BUTTON_PREV_PIN, 80);
             else if (!strcmp(what, "fault")) sim::setVescFault(vesc::FAULT_OVER_TEMP_FET);
             else if (!strcmp(what, "fault-clear")) sim::setVescFault(vesc::FAULT_NONE);
+            else if (!strcmp(what, "low-battery")) sim::setVoltageOverride(34.0f);
         }
 
         loop();

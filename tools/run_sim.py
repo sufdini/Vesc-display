@@ -83,7 +83,8 @@ def make_gif(frames_dir, out_dir, fps, scale):
 
     # Still images of each page, taken at moments the script has settled.
     stills = {"page-main.png": 12.0, "page-power.png": 18.0, "page-trip.png": 26.0,
-              "page-system.png": 33.0, "page-fault.png": 45.0, "page-nolink.png": 51.0}
+              "page-system.png": 33.0, "page-fault.png": 45.0, "page-lowbatt.png": 49.0,
+              "page-nolink.png": 54.0}
     for name, t in stills.items():
         idx = min(int(t * fps), len(frames) - 1)
         im = Image.open(frames[idx]).convert("RGB")
@@ -94,7 +95,7 @@ def make_gif(frames_dir, out_dir, fps, scale):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=os.path.join(ROOT, "sim_out"), help="output directory")
-    ap.add_argument("--seconds", type=float, default=52.0, help="length of the ride")
+    ap.add_argument("--seconds", type=float, default=55.0, help="length of the ride")
     ap.add_argument("--fps", type=int, default=8)
     ap.add_argument("--scale", type=int, default=2, help="upscale factor for the GIF")
     ap.add_argument("--open", action="store_true", help="open the GIF when done")

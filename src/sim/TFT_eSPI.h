@@ -61,6 +61,10 @@ public:
     void fillCircle(int x0, int y0, int r, uint16_t color);
 
     int16_t drawString(const char *s, int x, int y, uint8_t font);
+
+    // Viewport: subsequent drawing is offset by (x, y) and clipped to w x h.
+    void setViewport(int x, int y, int w, int h, bool vpDatum = true);
+    void resetViewport();
     int16_t textWidth(const char *s, uint8_t font) const;
     int16_t fontHeight(uint8_t font) const;
 
@@ -75,6 +79,8 @@ private:
     int w_ = 0;
     int h_ = 0;
     std::vector<uint16_t> buf_;
+    int vpX_ = 0, vpY_ = 0, vpW_ = 0, vpH_ = 0;  // clip rect in sprite coords
+    int xDatum_ = 0, yDatum_ = 0;                // drawing offset
     uint8_t datum_ = TL_DATUM;
     uint16_t textColor_ = TFT_WHITE;
     uint16_t textBg_ = TFT_BLACK;

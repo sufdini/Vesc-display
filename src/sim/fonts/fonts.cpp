@@ -6,8 +6,15 @@ extern const unsigned char widtbl_f16[96];
 extern const unsigned char *const chrtbl_f16[96];
 extern const unsigned char widtbl_f32[96];
 extern const unsigned char *const chrtbl_f32[96];
+extern const unsigned char widtbl_f64[96];
+extern const unsigned char *const chrtbl_f64[96];
 extern const unsigned char widtbl_f7s[96];
 extern const unsigned char *const chrtbl_f7s[96];
 #include "Font16.inc"
 #include "Font32rle.inc"
+#include "Font64rle.inc"
 #include "Font7srle.inc"
+
+// The 5x7 GLCD font (font 1) is a file-static array; expose it.
+#include "glcdfont.inc"
+const unsigned char *glcdFontData() { return font; }
