@@ -1,0 +1,8 @@
+{
+  "name": "VescUart",
+  "version": "1.0.0",
+  "description": "VESC UART protocol: packet framing, CRC, COMM_GET_VALUES decoding and speed/distance/battery math.",
+  "keywords": "vesc, uart, esc, telemetry",
+  "frameworks": "*",
+  "platforms": "*"
+}
