@@ -14,12 +14,15 @@ Press the right button to go to the next page, the left button to go back.
 
 | Page   | Shows                                                                 |
 | ------ | --------------------------------------------------------------------- |
-| Main   | Big speed readout, max speed, power bar (drive/regen), battery %, power, battery current, motor and ESC temperature |
+| Main   | Everything live on one screen: speed, battery % with gauge, pack and per-cell voltage, Ah used, distance driven, battery current, hub motor temperature, ESC temperature, power. Link loss and fault codes replace the max-speed line. |
 | Power  | Motor current, battery current, power, duty cycle (with bar), ERPM, pack voltage |
 | Trip   | Distance, Ah used, Wh used, Wh/km (or Wh/mi), regenerated Ah, max speed |
 | System | ESC and motor temperature, VESC controller id, packet / CRC counters, uptime, last fault since boot |
 
-The status bar at the top always shows the link state (green dot = live data,
+All values refresh ten times a second. Distance and Ah counters come from
+the VESC and reset when it is power cycled.
+
+On the other pages a status bar at the top shows the link state (green dot = live data,
 red = link lost), pack and per-cell voltage or the active **fault code**, and
 a battery gauge.
 
@@ -51,6 +54,7 @@ Edit `include/config.h`:
 | `GEAR_RATIO`          | Wheel turns per motor turn. `1.0` for hub motors, `15.0/36.0` for a 15T:36T belt drive. |
 | `BATTERY_CELLS`       | Series cell count (10S = 10).                               |
 | `USE_IMPERIAL_UNITS`  | `0` for km/h and km, `1` for mph and miles.                 |
+| `SPEED_UNIT_LABEL`    | Text next to the speed in metric mode, e.g. `"km/t"`.        |
 | `VESC_UART_BAUD`      | Must match the VESC UART app setting.                       |
 | `VESC_TIMEOUT_MS`     | Time without data before the display reports a lost link.   |
 

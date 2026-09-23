@@ -40,6 +40,9 @@
 // 0 = metric (km/h, km)   1 = imperial (mph, mi)
 #define USE_IMPERIAL_UNITS 0
 
+// Text shown next to the speed in metric mode ("km/t" for Danish/Norwegian).
+#define SPEED_UNIT_LABEL "km/h"
+
 // ---- Board (LilyGO T-Display) ----------------------------------------------
 #define BUTTON_NEXT_PIN 35   // right button: cycle pages
 #define BUTTON_PREV_PIN 0    // left button: previous page

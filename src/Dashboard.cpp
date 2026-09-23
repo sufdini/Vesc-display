@@ -3,6 +3,8 @@
 #include <math.h>
 #include <stdio.h>
 
+#include "config.h"
+
 namespace {
 constexpr uint16_t kBg = TFT_BLACK;
 constexpr uint16_t kFg = TFT_WHITE;
@@ -15,7 +17,7 @@ constexpr uint16_t kRegen = 0x3D9F;    // light blue
 
 constexpr int kStatusBarH = 18;
 
-const char *speedUnit(bool imperial) { return imperial ? "mph" : "km/h"; }
+const char *speedUnit(bool imperial) { return imperial ? "mph" : SPEED_UNIT_LABEL; }
 const char *distUnit(bool imperial) { return imperial ? "mi" : "km"; }
 }  // namespace
 
@@ -111,77 +113,113 @@ void Dashboard::drawStatusBar(const DashboardState &s) {
 }
 
 void Dashboard::drawPageDots(const DashboardState &s) {
+    // Vertical dots down the right edge.
     const int n = static_cast<int>(Page::Count);
-    const int spacing = 8;
-    const int x0 = w_ / 2 - (n - 1) * spacing / 2;
+    const int spacing = 10;
+    const int y0 = h_ / 2 - (n - 1) * spacing / 2;
+    const int x = w_ - 4;
     for (int i = 0; i < n; i++) {
         const bool active = i == static_cast<int>(s.page);
         if (active) {
-            spr_.fillCircle(x0 + i * spacing, h_ - 4, 2, kFg);
+            spr_.fillCircle(x, y0 + i * spacing, 2, kFg);
         } else {
-            spr_.drawCircle(x0 + i * spacing, h_ - 4, 2, kDim);
+            spr_.drawCircle(x, y0 + i * spacing, 2, kDim);
         }
     }
 }
 
 void Dashboard::drawPageMain(const DashboardState &s) {
+    // Everything live on one screen, no status bar:
+    //
+    //   [ 27 ] km/h        87%  [####]
+    //          max 32      40.1V  3.95V/c
+    //   AH USED   TRIP KM   BATT A
+    //   1.23      4.56      12.3
+    //   MOTOR C   ESC C     POWER W
+    //   45        38        512
     char buf[32];
-    const uint16_t numColor = s.connected ? kFg : kDim;
+    const bool live = s.connected;
+    const uint16_t numColor = live ? kFg : kDim;
 
-    // Big speed, 7-segment style font (48 px tall)
+    // --- Speed, 7-segment font, 48 px tall ------------------------------
     const float speed = fabsf(s.speed);
     snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(speed)));
     spr_.setTextColor(numColor, kBg);
     spr_.setTextDatum(TR_DATUM);
-    spr_.drawString(buf, 150, kStatusBarH + 10, 7);
+    spr_.drawString(buf, 100, 2, 7);
     spr_.setTextDatum(TL_DATUM);
 
-    // Units and direction next to it
     spr_.setTextColor(kDim, kBg);
-    spr_.drawString(speedUnit(s.imperial), 158, kStatusBarH + 12, 2);
-    if (s.speed < -0.5f) {
+    spr_.drawString(speedUnit(s.imperial), 106, 4, 2);
+
+    // Second line under the unit: link / fault state, or max speed.
+    if (!live) {
+        spr_.setTextColor(s.everConnected ? kBad : kDim, kBg);
+        spr_.drawString(s.everConnected ? "LINK LOST" : "NO VESC", 106, 20, 2);
+    } else if (s.values.fault != vesc::FAULT_NONE) {
+        spr_.setTextColor(kBad, kBg);
+        spr_.drawString("FAULT", 106, 20, 2);
+    } else if (s.speed < -0.5f) {
         spr_.setTextColor(kWarn, kBg);
-        spr_.drawString("REV", 158, kStatusBarH + 28, 2);
+        spr_.drawString("REVERSE", 106, 20, 2);
+    } else {
+        snprintf(buf, sizeof(buf), "max %d", static_cast<int>(roundf(s.maxSpeed)));
+        spr_.setTextColor(kDim, kBg);
+        spr_.drawString(buf, 106, 20, 2);
     }
-    snprintf(buf, sizeof(buf), "max %d", static_cast<int>(roundf(s.maxSpeed)));
-    spr_.setTextColor(kDim, kBg);
-    spr_.drawString(buf, 158, kStatusBarH + 46, 2);
 
-    // Power bar: right of centre = drive, left of centre = regen.
-    const int barY = kStatusBarH + 66;
-    const int barX = 8;
-    const int barW = w_ - 16;
-    const int barH = 8;
-    spr_.drawRect(barX, barY, barW, barH, kDim);
-    const int mid = barX + barW / 2;
-    const float maxW = 2000.0f;  // full scale watts for the bar
-    const float frac = constrain(s.powerW / maxW, -1.0f, 1.0f);
-    const int len = static_cast<int>(roundf(fabsf(frac) * (barW / 2 - 1)));
-    if (len > 0) {
-        if (frac >= 0) {
-            spr_.fillRect(mid, barY + 1, len, barH - 2, kAccent);
-        } else {
-            spr_.fillRect(mid - len, barY + 1, len, barH - 2, kRegen);
-        }
+    // --- Battery: percent, gauge, pack and cell voltage ------------------
+    const uint16_t battColor = live ? batteryColor(s.batteryPercent) : kDim;
+    snprintf(buf, sizeof(buf), "%d%%", static_cast<int>(roundf(s.batteryPercent)));
+    spr_.setTextColor(battColor, kBg);
+    spr_.setTextDatum(TR_DATUM);
+    spr_.drawString(buf, 194, 4, 4);
+    spr_.setTextDatum(TL_DATUM);
+    drawBattery(200, 8, 30, 16, s.batteryPercent, live);
+
+    snprintf(buf, sizeof(buf), "%.1fV %.2fV/c", s.batteryVoltage, s.cellVoltage);
+    spr_.setTextColor(numColor, kBg);
+    spr_.drawString(buf, 126, 32, 2);
+
+    // Fault name takes the line the voltage would otherwise share.
+    if (live && s.values.fault != vesc::FAULT_NONE) {
+        spr_.setTextColor(kBad, kBg);
+        spr_.setTextDatum(TR_DATUM);
+        spr_.drawString(vesc::faultName(s.values.fault), w_ - 12, 48, 2);
+        spr_.setTextDatum(TL_DATUM);
     }
-    spr_.drawFastVLine(mid, barY - 2, barH + 4, kFg);
 
-    // Bottom row: power, current, motor temp, FET temp
-    const int rowY = h_ - 34;
-    const int colW = w_ / 4;
-    const uint16_t powerColor = !s.connected ? kDim : (s.powerW < -5.0f ? kRegen : kFg);
+    spr_.drawFastHLine(0, 52, w_ - 10, kDim);
 
-    snprintf(buf, sizeof(buf), "%dW", static_cast<int>(roundf(s.powerW)));
-    drawLabelValue(4, rowY, "POWER", buf, powerColor);
+    // --- Live readings grid, 3 columns x 2 rows ---------------------------
+    const int colW = 78;
+    const int row0 = 55;
+    const int row1 = 95;
+    const float ahUsed = s.values.ampHours - s.values.ampHoursCharged;
 
-    snprintf(buf, sizeof(buf), "%.1fA", s.values.currentInput);
-    drawLabelValue(4 + colW, rowY, "BATT", buf, s.connected ? kFg : kDim);
+    snprintf(buf, sizeof(buf), "%.2f", ahUsed);
+    drawLabelValue(4, row0, "AH USED", buf, numColor);
 
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempMotor)));
-    drawLabelValue(4 + colW * 2, rowY, "MOTOR", buf, s.connected ? tempColor(s.values.tempMotor, 80, 100) : kDim);
+    if (s.tripDistance < 100.0f) {
+        snprintf(buf, sizeof(buf), "%.2f", s.tripDistance);
+    } else {
+        snprintf(buf, sizeof(buf), "%.1f", s.tripDistance);
+    }
+    drawLabelValue(4 + colW, row0, s.imperial ? "TRIP MI" : "TRIP KM", buf, numColor);
 
-    snprintf(buf, sizeof(buf), "%d`", static_cast<int>(roundf(s.values.tempFet)));
-    drawLabelValue(4 + colW * 3, rowY, "ESC", buf, s.connected ? tempColor(s.values.tempFet, 70, 85) : kDim);
+    snprintf(buf, sizeof(buf), "%.1f", s.values.currentInput);
+    const uint16_t currentColor = !live ? kDim : (s.values.currentInput < -0.5f ? kRegen : kFg);
+    drawLabelValue(4 + colW * 2, row0, "BATT A", buf, currentColor);
+
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.values.tempMotor)));
+    drawLabelValue(4, row1, "MOTOR `C", buf, live ? tempColor(s.values.tempMotor, 80, 100) : kDim);
+
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.values.tempFet)));
+    drawLabelValue(4 + colW, row1, "ESC `C", buf, live ? tempColor(s.values.tempFet, 70, 85) : kDim);
+
+    snprintf(buf, sizeof(buf), "%d", static_cast<int>(roundf(s.powerW)));
+    const uint16_t powerColor = !live ? kDim : (s.powerW < -5.0f ? kRegen : kFg);
+    drawLabelValue(4 + colW * 2, row1, "POWER W", buf, powerColor);
 }
 
 void Dashboard::drawPagePower(const DashboardState &s) {
@@ -270,7 +308,9 @@ void Dashboard::drawPageSystem(const DashboardState &s) {
 
 void Dashboard::render(const DashboardState &s) {
     spr_.fillSprite(kBg);
-    drawStatusBar(s);
+    if (s.page != Page::Main) {
+        drawStatusBar(s);
+    }
     switch (s.page) {
         case Page::Main: drawPageMain(s); break;
         case Page::Power: drawPagePower(s); break;
